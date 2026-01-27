@@ -152,5 +152,3 @@ long sessions.
 ------------------------------------------------------------------------
 
 ## License
-
-Add your chosen license here (MIT/Apache-2.0/etc).
