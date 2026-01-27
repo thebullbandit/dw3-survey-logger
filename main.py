@@ -12,6 +12,7 @@ plus the Observer Note system for CMDR observations.
 # ============================================================================
 
 import tkinter as tk
+from utils import resource_path
 from pathlib import Path
 import sys
 import os
@@ -56,7 +57,7 @@ def get_config() -> dict:
         "DB_PATH": OUTDIR / "DW3_Earth2.db",
         "OUTCSV": OUTDIR / "exports",  # directory; exporter will create timestamped files
         "LOGFILE": OUTDIR / "DW3_Earth2_Logger.log",
-        "ASSET_PATH": Path(__file__).parent / "assets",
+        "ASSET_PATH": resource_path("assets"),
         "ICON_NAME": "earth2.ico",
         
         # Monitoring settings
