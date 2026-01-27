@@ -1,4 +1,6 @@
-# DW3 Survey Logger (Earth2)
+# DW3 Survey Logger BETA
+
+THIS IS A BETA BUILD!
 
 Logger for **Elite Dangerous** survey runs
 (DW3-style), built to run for long sessions and keep your data safe.
