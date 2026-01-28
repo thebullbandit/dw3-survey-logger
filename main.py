@@ -56,12 +56,18 @@ def get_config() -> dict:
     bootstrap_data_dir = None
     bootstrap_export_dir = None
     bootstrap_hotkey_label = None
+    bootstrap_journal_dir = None
     try:
         if BOOTSTRAP_SETTINGS_PATH.exists():
             data = json.loads(BOOTSTRAP_SETTINGS_PATH.read_text(encoding="utf-8"))
             bootstrap_data_dir = data.get("data_dir")
             bootstrap_export_dir = data.get("export_dir")
             bootstrap_hotkey_label = data.get("hotkey_label")
+            bootstrap_journal_dir = data.get("journal_dir")
+
+        # Bootstrap journal override (if present)
+        if bootstrap_journal_dir:
+            config["JOURNAL_DIR"] = Path(bootstrap_journal_dir).expanduser()
     except Exception:
         # Bootstrap settings are optional; ignore if missing/corrupted
         pass
@@ -72,14 +78,14 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.2 BETA",
+        "VERSION": "0.9.3 BETA",
         
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
 
         
         # Paths
-        "JOURNAL_DIR": USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous",
+        "JOURNAL_DIR": Path(bootstrap_journal_dir).expanduser() if bootstrap_journal_dir else (USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous"),
         "OUTDIR": OUTDIR,
         "EXPORT_DIR": OUTDIR / "exports",
         "SETTINGS_PATH": OUTDIR / "settings.json",

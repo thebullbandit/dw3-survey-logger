@@ -464,16 +464,18 @@ class Earth2Presenter:
             current_export = str(self.config.get("EXPORT_DIR") or "")
             current_data = str(self.config.get("OUTDIR") or "")
             current_hotkey = str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
+            current_journal = str(self.config.get("JOURNAL_DIR") or "")
 
-            result = self.view.show_options_dialog(current_export, current_data, current_hotkey)
+            result = self.view.show_options_dialog(export_dir=current_export, data_dir=current_data, hotkey=current_hotkey, journal_dir=current_journal)
             if not result:
                 return
 
             data_dir = Path(result["data_dir"]).expanduser()
             export_dir = Path(result["export_dir"]).expanduser()
+            journal_dir = Path(result.get("journal_dir") or current_journal).expanduser() if (result.get("journal_dir") or current_journal) else Path(current_journal)
 
             # Hotkey
-            requested_hotkey = str(result.get("hotkey_label") or "").strip() or current_hotkey
+            requested_hotkey = str(result.get("hotkey_label") or result.get("hotkey") or "").strip() or current_hotkey
             try:
                 from hotkey_manager import parse_hotkey_label
                 _p, _tk, normalized = parse_hotkey_label(requested_hotkey)
@@ -492,6 +494,18 @@ class Earth2Presenter:
             # Update runtime config (exports can apply immediately)
             self.config["EXPORT_DIR"] = export_dir
             self.config["OUTCSV"] = export_dir
+
+            # Journal folder (can be applied immediately)
+            if str(journal_dir).strip():
+                self.config["JOURNAL_DIR"] = journal_dir
+                if self.journal_monitor is not None:
+                    try:
+                        self.journal_monitor.set_journal_dir(journal_dir)
+                        self.model.add_comms_message(f"[OPTIONS] Journal folder set to: {journal_dir}")
+                    except Exception as e:
+                        self.model.add_comms_message(f"[OPTIONS] Journal folder saved, but could not apply live: {e}")
+                else:
+                    self.model.add_comms_message(f"[OPTIONS] Journal folder set to: {journal_dir}")
 
             # If data folder changed, update derived paths in config.
             # NOTE: the database + observer storage are already open, so relocation requires restart.
@@ -513,7 +527,7 @@ class Earth2Presenter:
             if settings_path:
                 settings_path = Path(settings_path)
                 settings_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
+                payload = {"export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O"), "journal_dir": str(self.config.get("JOURNAL_DIR") or "")}
                 settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
             # Persist bootstrap settings (stable location so OUTDIR can be relocated)
@@ -521,7 +535,7 @@ class Earth2Presenter:
             if bootstrap_path:
                 bootstrap_path = Path(bootstrap_path)
                 bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"data_dir": str(data_dir), "export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
+                payload = {"data_dir": str(data_dir), "export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O"), "journal_dir": str(self.config.get("JOURNAL_DIR") or "")}
                 bootstrap_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         except Exception as e:

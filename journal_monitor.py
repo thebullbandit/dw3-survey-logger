@@ -609,6 +609,26 @@ class JournalMonitor:
     def request_rescan(self):
         """Request a full journal rescan"""
         self.rescan_event.set()
+
+    def set_journal_dir(self, journal_dir: Path):
+        """Update the journal directory (applies live) and trigger a rescan."""
+        journal_dir = Path(journal_dir).expanduser()
+        self.journal_dir = journal_dir
+        self.file_reader.journal_dir = journal_dir
+
+        # NavRoute.json (drift guardrail)
+        self._navroute_path = self.journal_dir / "NavRoute.json"
+        self._navroute_mtime = 0.0
+        self._navroute_cache = []
+
+        # Force file reopen on next loop
+        try:
+            self.file_reader.close()
+        except Exception:
+            pass
+
+        # Trigger rescan to re-seed state (cmdr/system) from the new folder
+        self.request_rescan()
     
     def _monitor_loop(self):
         """Main monitoring loop (runs in background thread)"""

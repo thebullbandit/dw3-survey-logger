@@ -1046,6 +1046,7 @@ class Earth2View:
         hotkey_value = None
         current_export_dir = ""
         current_data_dir = ""
+        current_journal_dir = ""
 
         if args and not kwargs:
             if len(args) == 2 and all(isinstance(a, str) for a in args):
@@ -1065,12 +1066,13 @@ class Earth2View:
             # Keyword-friendly path (optional)
             current_export_dir = str(kwargs.get("export_dir", ""))
             current_data_dir = str(kwargs.get("data_dir", ""))
+            current_journal_dir = str(kwargs.get("journal_dir", ""))
             hotkey_value = kwargs.get("hotkey", None)
             on_save_cb = kwargs.get("on_save", None)
         dlg = tk.Toplevel(self.root)
         dlg.title("Options")
         dlg.configure(bg=self.colors["BG_PANEL"])
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
         dlg.transient(self.root)
         dlg.grab_set()
         self._apply_icon_to_window(dlg)
@@ -1079,7 +1081,8 @@ class Earth2View:
         self.root.update_idletasks()
         x = self.root.winfo_rootx() + 80
         y = self.root.winfo_rooty() + 80
-        dlg.geometry(f"620x240+{x}+{y}")
+        dlg.geometry(f"700x520+{x}+{y}")
+        dlg.minsize(620, 420)
 
         # --- Data folder (DB/logs) ---
         tk.Label(
@@ -1124,7 +1127,61 @@ class Earth2View:
             command=browse_data
         ).pack(side="left", padx=(8, 0))
 
-        # --- Export folder ---
+        
+        # --- Elite journal folder ---
+        tk.Label(
+            dlg,
+            text="Elite journal folder (Saved Games/.../Elite Dangerous)",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(anchor="w", padx=12, pady=(10, 4))
+
+        row_journal = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        row_journal.pack(fill="x", padx=12)
+
+        var_journal = tk.StringVar(value=current_journal_dir or "")
+        entry_journal = tk.Entry(
+            row_journal,
+            textvariable=var_journal,
+            font=("Consolas", 9),
+            bg=self.colors["BG_FIELD"],
+            fg=self.colors["TEXT"],
+            insertbackground=self.colors["TEXT"],
+            relief="solid",
+            bd=1
+        )
+        entry_journal.pack(side="left", fill="x", expand=True)
+
+        def browse_journal():
+            chosen = filedialog.askdirectory(
+                parent=dlg,
+                initialdir=var_journal.get() or None,
+                title="Choose Elite Dangerous journal folder"
+            )
+            if chosen:
+                var_journal.set(chosen)
+
+        tk.Button(
+            row_journal,
+            text="Browse…",
+            font=("Consolas", 9),
+            bg=self.colors["BG_PANEL"],
+            fg=self.colors["TEXT"],
+            command=browse_journal
+        ).pack(side="left", padx=(8, 0))
+
+        tk.Label(
+            dlg,
+            text="Linux (Steam Proton) example: ~/.steam/steam/steamapps/compatdata/359320/pfx/drive_c/users/.../Saved Games/Frontier Developments/Elite Dangerous",
+            font=("Consolas", 8),
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"],
+            wraplength=590,
+            justify="left"
+        ).pack(anchor="w", padx=12, pady=(2, 6))
+
+# --- Export folder ---
         tk.Label(
             dlg,
             text="Export folder (CSV + backups)",
@@ -1204,29 +1261,44 @@ class Earth2View:
         btns = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
         btns.pack(fill="x", padx=12, pady=12)
 
-        result: dict[str, str | None] = {"data_dir": None, "export_dir": None, "hotkey": None}
+        result: dict[str, str | None] = {"data_dir": None, "export_dir": None, "journal_dir": None, "hotkey": None, "hotkey_label": None}
 
         def on_ok():
             data_dir = (var_data.get() or "").strip()
+            journal_dir = (var_journal.get() or "").strip() if "var_journal" in locals() else ""
             export_dir = (var_exp.get() or "").strip()
 
             if not data_dir:
                 messagebox.showwarning("Options", "Please choose a data folder.", parent=dlg)
                 return
 
+            # Journal folder is optional, but if provided we sanity-check it
+            if journal_dir:
+                jp = Path(journal_dir).expanduser()
+                if not jp.exists():
+                    messagebox.showwarning("Options", "Journal folder does not exist. Please pick the folder that contains Journal.*.log files.", parent=dlg)
+                    return
+                journals = list(jp.glob("Journal.*.log"))
+                if not journals:
+                    # Allow saving, but warn the user (some installs only create journals after first launch)
+                    if not messagebox.askyesno("Options", "No Journal.*.log files found in this folder. Save anyway?", parent=dlg):
+                        return
+
             # If export folder is empty, default to <data_dir>/exports
             if not export_dir:
                 export_dir = str(Path(data_dir) / "exports")
 
             result["data_dir"] = data_dir
+            result["journal_dir"] = journal_dir or None
             result["export_dir"] = export_dir
             hotkey = (var_hot.get() or "").strip()
             result["hotkey"] = hotkey or None
+            result["hotkey_label"] = hotkey or None
 
             # If called with callback (newer presenter), notify it as well
             if on_save_cb:
                 try:
-                    on_save_cb({"data_dir": data_dir, "export_dir": export_dir, "hotkey": hotkey or None})
+                    on_save_cb({"data_dir": data_dir, "export_dir": export_dir, "journal_dir": journal_dir or None, "hotkey": hotkey or None, "hotkey_label": hotkey or None})
                 except TypeError:
                     # Backwards/alternate callback shapes
                     try:
@@ -1269,7 +1341,7 @@ class Earth2View:
         dlg = tk.Toplevel(self.root)
         dlg.title("About")
         dlg.configure(bg=self.colors["BG_PANEL"])
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
         dlg.transient(self.root)
         dlg.grab_set()
         self._apply_icon_to_window(dlg)
