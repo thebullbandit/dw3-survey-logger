@@ -1035,8 +1035,10 @@ class Earth2View:
         Show Options dialog.
 
         Returns a dict with:
-          - data_dir: base folder for DB/logs/observer DB/settings.json
+          - data_dir: base folder for DB/logs/observer DB
           - export_dir: folder for CSV/DB exports
+          - journal_dir: Elite Dangerous journal folder (optional)
+          - hotkey_label: observer hotkey label (optional)
         or None if cancelled.
         """
         # Support both legacy and new calling conventions:
@@ -1057,6 +1059,11 @@ class Earth2View:
                 on_save_cb = args[2]
                 current_export_dir = str(settings.get("export_dir") or settings.get("EXPORT_DIR") or settings.get("export") or "")
                 current_data_dir = str(settings.get("data_dir") or settings.get("OUTDIR") or settings.get("data") or "")
+                current_journal_dir = str(settings.get("journal_dir") or settings.get("JOURNAL_DIR") or settings.get("journal") or "")
+            elif len(args) == 4 and all(isinstance(a, str) for a in args):
+                current_export_dir, current_data_dir = args[0], args[1]
+                hotkey_value = "" if args[2] is None else str(args[2])
+                current_journal_dir = args[3]
             elif len(args) == 3 and all(isinstance(a, str) for a in args[:2]):
                 current_export_dir, current_data_dir = args[0], args[1]
                 hotkey_value = "" if args[2] is None else str(args[2])
@@ -1073,6 +1080,7 @@ class Earth2View:
         dlg.title("Options")
         dlg.configure(bg=self.colors["BG_PANEL"])
         dlg.resizable(True, True)
+        dlg.minsize(620, 420)
         dlg.transient(self.root)
         dlg.grab_set()
         self._apply_icon_to_window(dlg)
@@ -1082,7 +1090,6 @@ class Earth2View:
         x = self.root.winfo_rootx() + 80
         y = self.root.winfo_rooty() + 80
         dlg.geometry(f"700x520+{x}+{y}")
-        dlg.minsize(620, 420)
 
         # --- Data folder (DB/logs) ---
         tk.Label(
@@ -1128,21 +1135,21 @@ class Earth2View:
         ).pack(side="left", padx=(8, 0))
 
         
-        # --- Elite journal folder ---
+        # --- Elite Dangerous Journal folder ---
         tk.Label(
             dlg,
-            text="Elite journal folder (Saved Games/.../Elite Dangerous)",
+            text="Elite Journal folder (Saved Games/Frontier Developments/Elite Dangerous)",
             font=("Consolas", 10, "bold"),
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
-        ).pack(anchor="w", padx=12, pady=(10, 4))
+        ).pack(anchor="w", padx=12, pady=(12, 4))
 
-        row_journal = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
-        row_journal.pack(fill="x", padx=12)
+        row_j = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        row_j.pack(fill="x", padx=12)
 
         var_journal = tk.StringVar(value=current_journal_dir or "")
-        entry_journal = tk.Entry(
-            row_journal,
+        entry_j = tk.Entry(
+            row_j,
             textvariable=var_journal,
             font=("Consolas", 9),
             bg=self.colors["BG_FIELD"],
@@ -1151,19 +1158,19 @@ class Earth2View:
             relief="solid",
             bd=1
         )
-        entry_journal.pack(side="left", fill="x", expand=True)
+        entry_j.pack(side="left", fill="x", expand=True)
 
         def browse_journal():
             chosen = filedialog.askdirectory(
                 parent=dlg,
                 initialdir=var_journal.get() or None,
-                title="Choose Elite Dangerous journal folder"
+                title="Choose Elite Dangerous Journal folder"
             )
             if chosen:
                 var_journal.set(chosen)
 
         tk.Button(
-            row_journal,
+            row_j,
             text="Browse…",
             font=("Consolas", 9),
             bg=self.colors["BG_PANEL"],
@@ -1171,17 +1178,7 @@ class Earth2View:
             command=browse_journal
         ).pack(side="left", padx=(8, 0))
 
-        tk.Label(
-            dlg,
-            text="Linux (Steam Proton) example: ~/.steam/steam/steamapps/compatdata/359320/pfx/drive_c/users/.../Saved Games/Frontier Developments/Elite Dangerous",
-            font=("Consolas", 8),
-            fg=self.colors["MUTED"],
-            bg=self.colors["BG_PANEL"],
-            wraplength=590,
-            justify="left"
-        ).pack(anchor="w", padx=12, pady=(2, 6))
-
-# --- Export folder ---
+        # --- Export folder ---
         tk.Label(
             dlg,
             text="Export folder (CSV + backups)",
@@ -1261,44 +1258,31 @@ class Earth2View:
         btns = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
         btns.pack(fill="x", padx=12, pady=12)
 
-        result: dict[str, str | None] = {"data_dir": None, "export_dir": None, "journal_dir": None, "hotkey": None, "hotkey_label": None}
+        result: dict[str, str | None] = {"data_dir": None, "export_dir": None, "hotkey": None}
 
         def on_ok():
             data_dir = (var_data.get() or "").strip()
-            journal_dir = (var_journal.get() or "").strip() if "var_journal" in locals() else ""
             export_dir = (var_exp.get() or "").strip()
+            journal_dir = (var_journal.get() or "").strip()
 
             if not data_dir:
                 messagebox.showwarning("Options", "Please choose a data folder.", parent=dlg)
                 return
-
-            # Journal folder is optional, but if provided we sanity-check it
-            if journal_dir:
-                jp = Path(journal_dir).expanduser()
-                if not jp.exists():
-                    messagebox.showwarning("Options", "Journal folder does not exist. Please pick the folder that contains Journal.*.log files.", parent=dlg)
-                    return
-                journals = list(jp.glob("Journal.*.log"))
-                if not journals:
-                    # Allow saving, but warn the user (some installs only create journals after first launch)
-                    if not messagebox.askyesno("Options", "No Journal.*.log files found in this folder. Save anyway?", parent=dlg):
-                        return
 
             # If export folder is empty, default to <data_dir>/exports
             if not export_dir:
                 export_dir = str(Path(data_dir) / "exports")
 
             result["data_dir"] = data_dir
-            result["journal_dir"] = journal_dir or None
             result["export_dir"] = export_dir
+            result["journal_dir"] = journal_dir or ""
             hotkey = (var_hot.get() or "").strip()
-            result["hotkey"] = hotkey or None
             result["hotkey_label"] = hotkey or None
 
             # If called with callback (newer presenter), notify it as well
             if on_save_cb:
                 try:
-                    on_save_cb({"data_dir": data_dir, "export_dir": export_dir, "journal_dir": journal_dir or None, "hotkey": hotkey or None, "hotkey_label": hotkey or None})
+                    on_save_cb({"data_dir": data_dir, "export_dir": export_dir, "journal_dir": journal_dir or "", "hotkey_label": hotkey or None})
                 except TypeError:
                     # Backwards/alternate callback shapes
                     try:
@@ -1331,18 +1315,10 @@ class Earth2View:
         entry_data.focus_set()
         self.root.wait_window(dlg)
         if result["data_dir"] and result["export_dir"]:
-            # Always include journal_dir so the presenter can persist/apply it.
-            payload = {
-                "data_dir": result["data_dir"],
-                "export_dir": result["export_dir"],
-                "journal_dir": result.get("journal_dir"),
-                "hotkey": result.get("hotkey"),
-                "hotkey_label": result.get("hotkey_label"),
-            }
-
-            # Backward-compat: older callers may only expect data_dir/export_dir
-            # but returning extra keys is safe.
-            return payload
+            # Preserve legacy return shape unless hotkey/callback was used
+            if on_save_cb or hotkey_value is not None:
+                return {"data_dir": result["data_dir"], "export_dir": result["export_dir"], "hotkey": result.get("hotkey")}
+            return {"data_dir": result["data_dir"], "export_dir": result["export_dir"]}
         return None
     def show_about_dialog(self, about_text: str, copy_text: str | None = None):
         """Show About dialog. If copy_text is provided, a 'Copy diagnostics' button is shown."""
@@ -1350,6 +1326,7 @@ class Earth2View:
         dlg.title("About")
         dlg.configure(bg=self.colors["BG_PANEL"])
         dlg.resizable(True, True)
+        dlg.minsize(620, 420)
         dlg.transient(self.root)
         dlg.grab_set()
         self._apply_icon_to_window(dlg)

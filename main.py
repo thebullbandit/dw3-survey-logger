@@ -64,10 +64,6 @@ def get_config() -> dict:
             bootstrap_export_dir = data.get("export_dir")
             bootstrap_hotkey_label = data.get("hotkey_label")
             bootstrap_journal_dir = data.get("journal_dir")
-
-        # Bootstrap journal override (if present)
-        if bootstrap_journal_dir:
-            config["JOURNAL_DIR"] = Path(bootstrap_journal_dir).expanduser()
     except Exception:
         # Bootstrap settings are optional; ignore if missing/corrupted
         pass
@@ -156,15 +152,9 @@ def get_config() -> dict:
             hotkey_label = data.get("hotkey_label")
             if hotkey_label:
                 config["HOTKEY_LABEL"] = str(hotkey_label)
-            journal_dir = data.get("journal_dir")
-            if journal_dir:
-                config["JOURNAL_DIR"] = Path(journal_dir).expanduser()
         elif bootstrap_export_dir:
             config["EXPORT_DIR"] = Path(bootstrap_export_dir)
             config["OUTCSV"] = Path(bootstrap_export_dir)
-
-        if bootstrap_journal_dir:
-            config["JOURNAL_DIR"] = Path(bootstrap_journal_dir).expanduser()
     except Exception:
         # Settings are optional; ignore if corrupted
         pass
