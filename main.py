@@ -78,7 +78,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.3 BETA",
+        "VERSION": "0.9.2 BETA",
         
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -156,9 +156,15 @@ def get_config() -> dict:
             hotkey_label = data.get("hotkey_label")
             if hotkey_label:
                 config["HOTKEY_LABEL"] = str(hotkey_label)
+            journal_dir = data.get("journal_dir")
+            if journal_dir:
+                config["JOURNAL_DIR"] = Path(journal_dir).expanduser()
         elif bootstrap_export_dir:
             config["EXPORT_DIR"] = Path(bootstrap_export_dir)
             config["OUTCSV"] = Path(bootstrap_export_dir)
+
+        if bootstrap_journal_dir:
+            config["JOURNAL_DIR"] = Path(bootstrap_journal_dir).expanduser()
     except Exception:
         # Settings are optional; ignore if corrupted
         pass
