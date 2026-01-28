@@ -47,7 +47,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.1 BETA",
+        "VERSION": "2.9.2 BETA",
         
         # Paths
         "JOURNAL_DIR": USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous",
