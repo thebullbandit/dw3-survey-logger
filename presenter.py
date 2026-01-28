@@ -456,30 +456,74 @@ class Earth2Presenter:
             print(f"[PRESENTER ERROR] Import journals: {e}")
 
     def handle_options(self):
-        """Handle Options button. Currently supports setting the export folder."""
+        """Handle Options button. Supports setting Data folder (DB/logs) + Export folder."""
         try:
             from pathlib import Path
             import json
 
-            current = str(self.config.get("EXPORT_DIR") or "")
-            new_path = self.view.show_options_dialog(current)
-            if not new_path:
+            current_export = str(self.config.get("EXPORT_DIR") or "")
+            current_data = str(self.config.get("OUTDIR") or "")
+            current_hotkey = str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
+
+            result = self.view.show_options_dialog(current_export, current_data, current_hotkey)
+            if not result:
                 return
 
-            # Update runtime config
-            export_dir = Path(new_path)
+            data_dir = Path(result["data_dir"]).expanduser()
+            export_dir = Path(result["export_dir"]).expanduser()
+
+            # Hotkey
+            requested_hotkey = str(result.get("hotkey_label") or "").strip() or current_hotkey
+            try:
+                from hotkey_manager import parse_hotkey_label
+                _p, _tk, normalized = parse_hotkey_label(requested_hotkey)
+                self.config["HOTKEY_LABEL"] = normalized
+            except Exception as e:
+                # Keep previous if invalid
+                try:
+                    from tkinter import messagebox
+                    messagebox.showwarning("Options", f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}", parent=self.view.root)
+                except Exception:
+                    pass
+                self.config["HOTKEY_LABEL"] = current_hotkey
+
+            old_data_dir = Path(self.config.get("OUTDIR") or data_dir)
+
+            # Update runtime config (exports can apply immediately)
             self.config["EXPORT_DIR"] = export_dir
             self.config["OUTCSV"] = export_dir
 
-            # Persist to settings file (portable, stored next to DB)
+            # If data folder changed, update derived paths in config.
+            # NOTE: the database + observer storage are already open, so relocation requires restart.
+            if data_dir != old_data_dir:
+                self.config["OUTDIR"] = data_dir
+                self.config["SETTINGS_PATH"] = data_dir / "settings.json"
+                self.config["DB_PATH"] = data_dir / "DW3_Earth2.db"
+                self.config["LOGFILE"] = data_dir / "DW3_Earth2_Logger.log"
+
+                self.model.add_comms_message(f"[OPTIONS] Data folder set to: {data_dir}")
+                self.model.add_comms_message("[OPTIONS] Restart required to move the live database to the new folder.")
+            else:
+                self.model.add_comms_message(f"[OPTIONS] Data folder unchanged: {data_dir}")
+
+            self.model.add_comms_message(f"[OPTIONS] Export folder set to: {export_dir}")
+
+            # Persist settings (portable, stored next to DB)
             settings_path = self.config.get("SETTINGS_PATH")
             if settings_path:
                 settings_path = Path(settings_path)
                 settings_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"export_dir": str(export_dir)}
+                payload = {"export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
                 settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-            self.model.add_comms_message(f"[OPTIONS] Export folder set to: {export_dir}")
+            # Persist bootstrap settings (stable location so OUTDIR can be relocated)
+            bootstrap_path = self.config.get("BOOTSTRAP_SETTINGS_PATH")
+            if bootstrap_path:
+                bootstrap_path = Path(bootstrap_path)
+                bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {"data_dir": str(data_dir), "export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
+                bootstrap_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
         except Exception as e:
             self.model.add_comms_message(f"[ERROR] Failed to save options: {e}")
             print(f"[PRESENTER ERROR] Options: {e}")

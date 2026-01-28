@@ -1,6 +1,4 @@
-# DW3 Survey Logger BETA
-
-THIS IS A BETA BUILD!
+# DW3 Survey Logger (Earth2)
 
 Logger for **Elite Dangerous** survey runs
 (DW3-style), built to run for long sessions and keep your data safe.
@@ -153,4 +151,4 @@ long sessions.
 
 ## License
 
-
+Add your chosen license here (MIT/Apache-2.0/etc).

@@ -21,6 +21,7 @@ Communicates with Presenter for all data operations.
 # ============================================================================
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 from tkinter import filedialog, messagebox
 from typing import Optional, Dict, Any, Callable, List
@@ -126,6 +127,30 @@ class Earth2View:
                 self.root.iconbitmap(str(icon_path))
         except Exception:
             pass  # Icon not critical
+
+    def _apply_icon_to_window(self, win: tk.Toplevel | tk.Tk):
+        """Apply app icon to a Tk/Toplevel window (Windows .ico)."""
+        try:
+            from pathlib import Path
+            import sys, os
+
+            # Prefer explicit Earth2.ico in assets/
+            base_dir = Path(getattr(sys, "_MEIPASS", os.path.abspath(".")))
+            earth2_ico = base_dir / "assets" / "Earth2.ico"
+            if earth2_ico.exists():
+                win.iconbitmap(str(earth2_ico))
+                return
+
+            # Fallback to configured icon (used by main window)
+            icon_name = self.config.get("ICON_NAME", "earth2.ico")
+            asset_path = self.config.get("ASSET_PATH", None)
+            if asset_path:
+                icon_path = Path(asset_path) / icon_name
+                if icon_path.exists():
+                    win.iconbitmap(str(icon_path))
+        except Exception:
+            pass  # Icon not critical
+
     
     def _build_header(self):
         """Build header with title and LED indicator"""
@@ -1005,36 +1030,73 @@ class Earth2View:
     # EVENT HANDLERS - Call presenter callbacks
     # ========================================================================
 
-    def show_options_dialog(self, current_export_dir: str) -> str | None:
-        """Show Options dialog. Returns new export directory string, or None if cancelled."""
+    def show_options_dialog(self, *args, **kwargs) -> dict | None:
+        """
+        Show Options dialog.
+
+        Returns a dict with:
+          - data_dir: base folder for DB/logs/observer DB/settings.json
+          - export_dir: folder for CSV/DB exports
+        or None if cancelled.
+        """
+        # Support both legacy and new calling conventions:
+        #   1) show_options_dialog(export_dir, data_dir) -> returns dict
+        #   2) show_options_dialog(settings_dict, hotkey, on_save) -> calls on_save(result)
+        on_save_cb = None
+        hotkey_value = None
+        current_export_dir = ""
+        current_data_dir = ""
+
+        if args and not kwargs:
+            if len(args) == 2 and all(isinstance(a, str) for a in args):
+                current_export_dir, current_data_dir = args
+            elif len(args) == 3 and isinstance(args[0], dict):
+                settings = args[0] or {}
+                hotkey_value = "" if args[1] is None else str(args[1])
+                on_save_cb = args[2]
+                current_export_dir = str(settings.get("export_dir") or settings.get("EXPORT_DIR") or settings.get("export") or "")
+                current_data_dir = str(settings.get("data_dir") or settings.get("OUTDIR") or settings.get("data") or "")
+            elif len(args) == 3 and all(isinstance(a, str) for a in args[:2]):
+                current_export_dir, current_data_dir = args[0], args[1]
+                hotkey_value = "" if args[2] is None else str(args[2])
+            else:
+                raise TypeError("show_options_dialog expected (export_dir, data_dir) or (settings_dict, hotkey, on_save)")
+        else:
+            # Keyword-friendly path (optional)
+            current_export_dir = str(kwargs.get("export_dir", ""))
+            current_data_dir = str(kwargs.get("data_dir", ""))
+            hotkey_value = kwargs.get("hotkey", None)
+            on_save_cb = kwargs.get("on_save", None)
         dlg = tk.Toplevel(self.root)
         dlg.title("Options")
         dlg.configure(bg=self.colors["BG_PANEL"])
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
+        self._apply_icon_to_window(dlg)
 
         # Center over parent
         self.root.update_idletasks()
         x = self.root.winfo_rootx() + 80
         y = self.root.winfo_rooty() + 80
-        dlg.geometry(f"560x160+{x}+{y}")
+        dlg.geometry(f"620x240+{x}+{y}")
 
+        # --- Data folder (DB/logs) ---
         tk.Label(
             dlg,
-            text="Export folder",
+            text="Data folder (DB + logs) RESTART REQUIRED",
             font=("Consolas", 10, "bold"),
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=12, pady=(12, 4))
 
-        row = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
-        row.pack(fill="x", padx=12)
+        row_data = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        row_data.pack(fill="x", padx=12)
 
-        var_path = tk.StringVar(value=current_export_dir or "")
-        entry = tk.Entry(
-            row,
-            textvariable=var_path,
+        var_data = tk.StringVar(value=current_data_dir or "")
+        entry_data = tk.Entry(
+            row_data,
+            textvariable=var_data,
             font=("Consolas", 9),
             bg=self.colors["BG_FIELD"],
             fg=self.colors["TEXT"],
@@ -1042,38 +1104,135 @@ class Earth2View:
             relief="solid",
             bd=1
         )
-        entry.pack(side="left", fill="x", expand=True)
+        entry_data.pack(side="left", fill="x", expand=True)
 
-        def browse():
+        def browse_data():
             chosen = filedialog.askdirectory(
                 parent=dlg,
-                initialdir=var_path.get() or None,
-                title="Choose export folder"
+                initialdir=var_data.get() or None,
+                title="Choose data folder (DB + logs)"
             )
             if chosen:
-                var_path.set(chosen)
+                var_data.set(chosen)
 
         tk.Button(
-            row,
+            row_data,
             text="Browse…",
             font=("Consolas", 9),
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
-            command=browse
+            command=browse_data
         ).pack(side="left", padx=(8, 0))
 
+        # --- Export folder ---
+        tk.Label(
+            dlg,
+            text="Export folder (CSV + backups)",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(anchor="w", padx=12, pady=(10, 4))
+
+        row_exp = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        row_exp.pack(fill="x", padx=12)
+
+        var_exp = tk.StringVar(value=current_export_dir or "")
+        entry_exp = tk.Entry(
+            row_exp,
+            textvariable=var_exp,
+            font=("Consolas", 9),
+            bg=self.colors["BG_FIELD"],
+            fg=self.colors["TEXT"],
+            insertbackground=self.colors["TEXT"],
+            relief="solid",
+            bd=1
+        )
+        entry_exp.pack(side="left", fill="x", expand=True)
+
+        def browse_export():
+            chosen = filedialog.askdirectory(
+                parent=dlg,
+                initialdir=var_exp.get() or var_data.get() or None,
+                title="Choose export folder"
+            )
+            if chosen:
+                var_exp.set(chosen)
+
+        tk.Button(
+            row_exp,
+            text="Browse…",
+            font=("Consolas", 9),
+            bg=self.colors["BG_PANEL"],
+            fg=self.colors["TEXT"],
+            command=browse_export
+        ).pack(side="left", padx=(8, 0))
+
+        # --- Hotkey (optional, used by newer presenter) ---
+        tk.Label(
+            dlg,
+            text="Observer hotkey (e.g. Ctrl+Alt+O) RESTART REQUIRED",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(anchor="w", padx=12, pady=(12, 4))
+
+        row_hot = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        row_hot.pack(fill="x", padx=12)
+
+        if hotkey_value is None:
+            hotkey_value = str(self.config.get("HOTKEY_OBSERVER", ""))
+        var_hot = tk.StringVar(value=hotkey_value)
+        entry_hot = tk.Entry(
+            row_hot,
+            textvariable=var_hot,
+            width=28,
+            font=("Consolas", 10),
+            bg=self.colors["BG_FIELD"],
+            fg=self.colors["TEXT"],
+            insertbackground=self.colors["TEXT"]
+        )
+        entry_hot.pack(side="left")
+
+        tk.Label(
+            row_hot,
+            text="(Use Ctrl/Alt/Shift + key or F1..F12)",
+            font=("Consolas", 9),
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(side="left", padx=(10, 0))
         # Buttons
         btns = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
         btns.pack(fill="x", padx=12, pady=12)
 
-        result: dict[str, str | None] = {"path": None}
+        result: dict[str, str | None] = {"data_dir": None, "export_dir": None, "hotkey": None}
 
         def on_ok():
-            p = var_path.get().strip()
-            if not p:
-                messagebox.showwarning("Options", "Please choose an export folder.", parent=dlg)
+            data_dir = (var_data.get() or "").strip()
+            export_dir = (var_exp.get() or "").strip()
+
+            if not data_dir:
+                messagebox.showwarning("Options", "Please choose a data folder.", parent=dlg)
                 return
-            result["path"] = p
+
+            # If export folder is empty, default to <data_dir>/exports
+            if not export_dir:
+                export_dir = str(Path(data_dir) / "exports")
+
+            result["data_dir"] = data_dir
+            result["export_dir"] = export_dir
+            hotkey = (var_hot.get() or "").strip()
+            result["hotkey"] = hotkey or None
+
+            # If called with callback (newer presenter), notify it as well
+            if on_save_cb:
+                try:
+                    on_save_cb({"data_dir": data_dir, "export_dir": export_dir, "hotkey": hotkey or None})
+                except TypeError:
+                    # Backwards/alternate callback shapes
+                    try:
+                        on_save_cb(export_dir, data_dir, hotkey or None)
+                    except TypeError:
+                        on_save_cb(data_dir, export_dir, hotkey or None)
             dlg.destroy()
 
         def on_cancel():
@@ -1097,10 +1256,14 @@ class Earth2View:
             command=on_ok
         ).pack(side="right")
 
-        entry.focus_set()
+        entry_data.focus_set()
         self.root.wait_window(dlg)
-        return result["path"]
-
+        if result["data_dir"] and result["export_dir"]:
+            # Preserve legacy return shape unless hotkey/callback was used
+            if on_save_cb or hotkey_value is not None:
+                return {"data_dir": result["data_dir"], "export_dir": result["export_dir"], "hotkey": result.get("hotkey")}
+            return {"data_dir": result["data_dir"], "export_dir": result["export_dir"]}
+        return None
     def show_about_dialog(self, about_text: str, copy_text: str | None = None):
         """Show About dialog. If copy_text is provided, a 'Copy diagnostics' button is shown."""
         dlg = tk.Toplevel(self.root)
@@ -1109,6 +1272,7 @@ class Earth2View:
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
+        self._apply_icon_to_window(dlg)
 
         self.root.update_idletasks()
         x = self.root.winfo_rootx() + 90
