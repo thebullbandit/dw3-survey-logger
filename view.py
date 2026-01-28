@@ -1331,10 +1331,18 @@ class Earth2View:
         entry_data.focus_set()
         self.root.wait_window(dlg)
         if result["data_dir"] and result["export_dir"]:
-            # Preserve legacy return shape unless hotkey/callback was used
-            if on_save_cb or hotkey_value is not None:
-                return {"data_dir": result["data_dir"], "export_dir": result["export_dir"], "hotkey": result.get("hotkey")}
-            return {"data_dir": result["data_dir"], "export_dir": result["export_dir"]}
+            # Always include journal_dir so the presenter can persist/apply it.
+            payload = {
+                "data_dir": result["data_dir"],
+                "export_dir": result["export_dir"],
+                "journal_dir": result.get("journal_dir"),
+                "hotkey": result.get("hotkey"),
+                "hotkey_label": result.get("hotkey_label"),
+            }
+
+            # Backward-compat: older callers may only expect data_dir/export_dir
+            # but returning extra keys is safe.
+            return payload
         return None
     def show_about_dialog(self, about_text: str, copy_text: str | None = None):
         """Show About dialog. If copy_text is provided, a 'Copy diagnostics' button is shown."""
