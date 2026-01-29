@@ -249,6 +249,7 @@ class Earth2Presenter:
         # Get rating distributions
         session_ratings = self.model.get_session_ratings()
         alltime_ratings = self.model.load_rating_distribution()
+        alltime_total_candidates = sum(alltime_ratings.values()) if isinstance(alltime_ratings, dict) else 0
         
         stats_data = {
             "session_time": session_time,
@@ -258,6 +259,8 @@ class Earth2Presenter:
             "session_rate": session_rate_text,
             "session_ratings": session_ratings,
             "alltime_ratings": alltime_ratings,
+            "session_candidate_count": sess_candidates,
+            "alltime_candidate_count": alltime_total_candidates,
         }
         
         self.view.update_statistics(stats_data)

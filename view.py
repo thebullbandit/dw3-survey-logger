@@ -26,6 +26,7 @@ from tkinter import ttk
 from tkinter import filedialog, messagebox
 from typing import Optional, Dict, Any, Callable, List
 from collections import deque
+import webbrowser
 
 
 # ============================================================================
@@ -175,6 +176,22 @@ class Earth2View:
         led_canvas = tk.Canvas(led_frame, width=20, height=20, bg=self.colors["BG_PANEL"], highlightthickness=0)
         led_canvas.pack(side="left", padx=(0, 10))
         led_dot = led_canvas.create_oval(4, 4, 16, 16, fill=self.colors["LED_IDLE"], outline="")
+
+        # Quick-link: DW3 community radio (opens in default browser)
+        lbl_radio = tk.Label(
+            led_frame,
+            text="DW3 RADIO",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"],
+            cursor="hand2"
+        )
+        lbl_radio.pack(side="left", padx=(0, 12))
+        lbl_radio.bind("<Button-1>", lambda _e: self._open_dw3_radio())
+
+        # Small hover affordance
+        lbl_radio.bind("<Enter>", lambda _e: lbl_radio.config(fg=self.colors.get("TEXT", self.colors["ORANGE"])))
+        lbl_radio.bind("<Leave>", lambda _e: lbl_radio.config(fg=self.colors["ORANGE"]))
         
         lbl_feed = tk.Label(
             led_frame,
@@ -189,7 +206,9 @@ class Earth2View:
         self.widgets["header"] = header
         self.widgets["led_canvas"] = led_canvas
         self.widgets["led_dot"] = led_dot
+        self.widgets["lbl_radio"] = lbl_radio
         self.widgets["lbl_feed"] = lbl_feed
+        self.widgets["lbl_radio"] = lbl_radio
     
     def _build_status_panel(self):
         """Build status information panel"""
@@ -489,64 +508,64 @@ class Earth2View:
         # Rating bars
         rating_frame = tk.Frame(panel, bg=self.colors["BG_PANEL"])
         rating_frame.pack(fill="x", padx=10, pady=5)
-        
-        # Session ratings
+
+        # Session coverage (sampling phase)
         tk.Label(
             rating_frame,
-            text="Session Ratings:",
+            text="Session Coverage:",
             font=("Consolas", 9),
             fg=self.colors["MUTED"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=5, pady=(5, 2))
-        
-        session_rating_canvas = tk.Canvas(
+
+        session_coverage_canvas = tk.Canvas(
             rating_frame,
             height=20,
             bg=self.colors["BG_FIELD"],
             highlightthickness=0
         )
-        session_rating_canvas.pack(fill="x", padx=5, pady=2)
-        
-        lbl_session_rating = tk.Label(
+        session_coverage_canvas.pack(fill="x", padx=5, pady=2)
+
+        lbl_session_coverage = tk.Label(
             rating_frame,
-            text="Ratings (session): A:0  B:0  C:0",
+            text="Coverage (session): Aimless  0 / 10 candidates",
             font=("Consolas", 8),
             fg=self.colors["MUTED"],
             bg=self.colors["BG_PANEL"]
         )
-        lbl_session_rating.pack(anchor="w", padx=5, pady=2)
+        lbl_session_coverage.pack(anchor="w", padx=5, pady=2)
         
-        # All-time ratings
+        # All-time coverage (total sampling depth)
         tk.Label(
             rating_frame,
-            text="All-Time Ratings:",
+            text="All-Time Coverage:",
             font=("Consolas", 9),
             fg=self.colors["MUTED"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=5, pady=(10, 2))
-        
-        alltime_rating_canvas = tk.Canvas(
+
+        alltime_coverage_canvas = tk.Canvas(
             rating_frame,
             height=20,
             bg=self.colors["BG_FIELD"],
             highlightthickness=0
         )
-        alltime_rating_canvas.pack(fill="x", padx=5, pady=2)
-        
-        lbl_alltime_rating = tk.Label(
+        alltime_coverage_canvas.pack(fill="x", padx=5, pady=2)
+
+        lbl_alltime_coverage = tk.Label(
             rating_frame,
-            text="Ratings (all-time): A:0  B:0  C:0",
+            text="Coverage (all-time): Aimless  0 / 10 candidates",
             font=("Consolas", 8),
             fg=self.colors["MUTED"],
             bg=self.colors["BG_PANEL"]
         )
-        lbl_alltime_rating.pack(anchor="w", padx=5, pady=2)
+        lbl_alltime_coverage.pack(anchor="w", padx=5, pady=2)
         
         # Store references
-        self.widgets["session_rating_canvas"] = session_rating_canvas
-        self.widgets["lbl_session_rating"] = lbl_session_rating
-        self.widgets["alltime_rating_canvas"] = alltime_rating_canvas
-        self.widgets["lbl_alltime_rating"] = lbl_alltime_rating
+        self.widgets["session_coverage_canvas"] = session_coverage_canvas
+        self.widgets["lbl_session_coverage"] = lbl_session_coverage
+        self.widgets["alltime_coverage_canvas"] = alltime_coverage_canvas
+        self.widgets["lbl_alltime_coverage"] = lbl_alltime_coverage
     
     def _build_comms_panel(self):
         """Build COMMS feed panel"""
@@ -884,22 +903,22 @@ class Earth2View:
         self._update_if_changed("lbl_sess_rate", "text", stats_data.get("session_rate", "Rate: 0.0/hour"), "sess_rate")
         
         # Rating distributions
-        if "session_ratings" in stats_data:
-            self._draw_rating_bar(
-                self.widgets["session_rating_canvas"],
-                stats_data["session_ratings"],
-                self.widgets["lbl_session_rating"],
+        if "session_candidate_count" in stats_data:
+            self._draw_coverage_bar(
+                self.widgets["session_coverage_canvas"],
+                int(stats_data.get("session_candidate_count") or 0),
+                self.widgets["lbl_session_coverage"],
                 "session"
             )
         
-        if "alltime_ratings" in stats_data:
-            self._draw_rating_bar(
-                self.widgets["alltime_rating_canvas"],
-                stats_data["alltime_ratings"],
-                self.widgets["lbl_alltime_rating"],
+        if "alltime_candidate_count" in stats_data:
+            self._draw_coverage_bar(
+                self.widgets["alltime_coverage_canvas"],
+                int(stats_data.get("alltime_candidate_count") or 0),
+                self.widgets["lbl_alltime_coverage"],
                 "alltime"
             )
-    
+
     def update_comms(self, messages: List[str]):
         """Update COMMS feed"""
         comms_text = "\n".join(messages) if messages else ""
@@ -937,6 +956,23 @@ class Earth2View:
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
+
+    def _open_dw3_radio(self):
+        """Open DW3 community radio in the user's default browser."""
+        url = "https://distantworlds3.space/radio/"
+        try:
+            webbrowser.open(url, new=2)  # try new tab
+            # If COMMS is present, drop a small breadcrumb.
+            if "txt_comms" in self.widgets:
+                try:
+                    # This uses the existing COMMS update pipeline (model-driven),
+                    # so we avoid directly inserting into the text widget here.
+                    pass
+                except Exception:
+                    pass
+        except Exception:
+            # Fail silently: opening a browser shouldn't ever crash the logger.
+            return
     
     def _update_if_changed(self, widget_name: str, property_name: str, new_value: Any, cache_key: str):
         """Update widget property only if value changed (optimization)"""
@@ -1026,6 +1062,72 @@ class Earth2View:
         except Exception as e:
             print(f"[VIEW ERROR] draw_rating_bar: {e}")
     
+
+    def _draw_coverage_bar(self, canvas: tk.Canvas, candidate_count: int, label: tk.Label, cache_prefix: str):
+        """Draw a single-bar session/all-time coverage indicator using Elite-flavored sampling phases."""
+        try:
+            tiers = [
+                ("Aimless", 0, 9),
+                ("Mostly Aimless", 10, 24),
+                ("Scout", 25, 49),
+                ("Surveyor", 50, 99),
+                ("Trailblazer", 100, 199),
+                ("Pathfinder", 200, 399),
+                ("Ranger", 400, 699),
+                ("Pioneer", 700, 999),
+                ("Elite", 1000, None),
+            ]
+
+            # Determine tier
+            name = "Aimless"
+            start = 0
+            end = 9
+            for t_name, t_start, t_end in tiers:
+                if t_end is None:
+                    if candidate_count >= t_start:
+                        name, start, end = t_name, t_start, t_end
+                        break
+                else:
+                    if t_start <= candidate_count <= t_end:
+                        name, start, end = t_name, t_start, t_end
+                        break
+
+            # Compute progress within tier
+            if end is None:
+                frac = 1.0
+                tier_target = f"{start}+"
+                progress_text = f"{candidate_count} / {tier_target}"
+            else:
+                tier_size = (end - start + 1)
+                into_tier = max(0, candidate_count - start)
+                frac = min(1.0, into_tier / float(tier_size))
+                tier_target = end + 1
+                progress_text = f"{candidate_count} / {tier_target}"
+
+            # Cache
+            cache_key = f"{cache_prefix}_coverage"
+            cached = self._ui_cache.get(cache_key)
+            cache_tuple = (candidate_count, name, start, end)
+            if cached == cache_tuple:
+                return
+            self._ui_cache[cache_key] = cache_tuple
+
+            # Draw bar
+            canvas.delete("all")
+            w = canvas.winfo_width() or 800
+            h = canvas.winfo_height() or 20
+            fill_w = int(frac * w)
+
+            # Background (implicitly BG_FIELD), draw filled portion
+            if fill_w > 0:
+                canvas.create_rectangle(0, 0, fill_w, h, outline="", fill=self.colors.get("ORANGE_DIM", self.colors["ORANGE"]))
+
+            # Label
+            label.config(text=f"Coverage ({cache_prefix}): {name}  {progress_text} candidates")
+
+        except Exception as e:
+            print(f"[VIEW ERROR] draw_coverage_bar: {e}")
+
     # ========================================================================
     # EVENT HANDLERS - Call presenter callbacks
     # ========================================================================

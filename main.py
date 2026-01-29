@@ -28,7 +28,11 @@ from observer_models import ObserverNote
 # ============================================================================
 
 def get_config() -> dict:
+    """
+    Get application configuration
     
+    In the future, this could load from a config file (Step 6 of refactoring)
+    """
     USERPROFILE = Path(os.environ.get("USERPROFILE", "")) or Path.home()
 
     # Bootstrap settings (stable location so users can relocate OUTDIR)
@@ -61,7 +65,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.6 BETA",
+        "VERSION": "0.9.7",
         
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
