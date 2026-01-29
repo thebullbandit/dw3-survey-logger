@@ -425,6 +425,18 @@ class JournalMonitor:
             except (ValueError, TypeError):
                 pass
 
+        # Update model 'signal' + current context so Status/Target Lock can reflect jumps
+        # (Add Observation uses JournalStateManager; the main panels use model status.)
+        try:
+            if self.current_system:
+                self.model.update_status({
+                    "last_signal_local": self.current_system,
+                    # Populate target-lock context even when we haven't logged a candidate yet
+                    "last_system": self.current_system,
+                })
+        except Exception:
+            pass
+
         # Update state manager (Location event only, FSDJump handled separately)
         if self.state_manager and evt.get("event") == "Location":
             self.state_manager.on_location(evt)
@@ -449,6 +461,27 @@ class JournalMonitor:
         # Update state manager
         if self.state_manager:
             self.state_manager.on_scan(evt)
+        # Keep Target Lock in sync with what you're currently scanning.
+        # If this scan turns into a candidate, presenter.log_candidate() will overwrite these fields.
+        try:
+            system = (evt.get("StarSystem") or self.current_system or "").strip()
+            body_name = (evt.get("BodyName") or "").strip()
+            planet_class = (evt.get("PlanetClass") or "").strip()
+            if system:
+                update = {"last_system": system}
+                if body_name:
+                    update.update({
+                        "last_body": body_name,
+                        "last_type": planet_class or "-",
+                        "last_rating": "-",
+                        "last_worth": "-",
+                        "last_reason": "Scanning...",
+                        "last_inara": self.model.generate_inara_link(system),
+                    })
+                self.model.update_status(update)
+        except Exception:
+            pass
+
 
         # Check if this is an Earth2 candidate
         candidate_data = self._parse_candidate(evt, "Scan")
