@@ -285,7 +285,7 @@ class Earth2Presenter:
             import threading
             import os
             
-            self.model.add_comms_message("[EXPORT] Starting CSV export...")
+            self.model.add_comms_message("[SYSTEM] Starting CSV export...")
             
             def export_thread():
                 try:
@@ -307,8 +307,8 @@ class Earth2Presenter:
                     # Export using database method
                     self.model.db.export_to_csv(timestamped_path)
                     
-                    self.model.add_comms_message(f"[EXPORT] CSV saved: {timestamped_path.name}")
-                    self.model.add_comms_message(f"[EXPORT] Full path: {timestamped_path}")
+                    self.model.add_comms_message(f"[INFO] CSV saved: {timestamped_path.name}")
+                    self.model.add_comms_message(f"[INFO] Full path: {timestamped_path}")
                     
                 except Exception as e:
                     self.model.add_comms_message(f"[ERROR] CSV export failed: {e}")
@@ -322,7 +322,7 @@ class Earth2Presenter:
             
         except Exception as e:
             print(f"[PRESENTER ERROR] Export CSV: {e}")
-    
+
     def handle_export_db(self):
         """Handle database export request"""
         try:
@@ -330,50 +330,51 @@ class Earth2Presenter:
             from datetime import datetime
             import shutil
             import threading
-            
-            self.model.add_comms_message("[EXPORT] Starting database backup...")
-            
+
+            self.model.add_comms_message("[SYSTEM] Starting database backup...")
+
             def export_thread():
+                backup_path = None
                 try:
                     # Get database path from config
                     db_path_str = self.config.get("DB_PATH", "")
-                    
                     if not db_path_str:
                         self.model.add_comms_message("[ERROR] Database path not configured")
                         return
-                    
+
                     db_path = Path(db_path_str)
-                    
                     if not db_path.exists():
                         self.model.add_comms_message(f"[ERROR] Database file not found at: {db_path}")
                         return
-                    
+
                     # Create backup with timestamp
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     backup_path = db_path.parent / f"{db_path.stem}_backup_{timestamp}{db_path.suffix}"
-                    
+
                     # Copy database file
                     shutil.copy2(db_path, backup_path)
-                    
+
                     # Get file size
                     size_mb = backup_path.stat().st_size / (1024 * 1024)
-                    
-                    self.model.add_comms_message(f"[EXPORT] Database backup saved: {backup_path.name}")
-                    self.model.add_comms_message(f"[EXPORT] Size: {size_mb:.2f} MB")
-                    self.model.add_comms_message(f"[EXPORT] Full path: {backup_path}")
-                    
+
+                    self.model.add_comms_message(f"[INFO] Database backup saved: {backup_path.name}")
+                    self.model.add_comms_message(f"[INFO] Size: {size_mb:.2f} MB")
+                    self.model.add_comms_message(f"[INFO] Full path: {backup_path}")
+
                 except Exception as e:
-                    self.model.add_comms_message(f"[ERROR] Database backup failed: {e}")
+                    self.model.add_comms_message("[ERROR] Database backup failed. See logs for details.")
                     print(f"[PRESENTER ERROR] Export DB: {e}")
                     import traceback
                     traceback.print_exc()
-            
+
             # Run in background thread
             thread = threading.Thread(target=export_thread, daemon=True)
             thread.start()
-            
+
         except Exception as e:
-            print(f"[PRESENTER ERROR] Export DB: {e}")
+            print(f"[PRESENTER ERROR] Export DB (outer): {e}")
+
+
     
     def handle_rescan(self):
         """Handle rescan current journal request"""
@@ -382,16 +383,16 @@ class Earth2Presenter:
                 self.model.add_comms_message("[SYSTEM] Rescanning current journal from start...")
                 self.journal_monitor.request_rescan()
             else:
-                self.model.add_comms_message("[ERROR] Journal monitor not available")
+                self.model.add_comms_message("[INFO] Live journal monitoring is not active – rescan unavailable")
         except Exception as e:
-            self.model.add_comms_message(f"[ERROR] Rescan failed: {e}")
+            self.model.add_comms_message("[ERROR] Rescan failed due to an internal error. See logs for details.")
             print(f"[PRESENTER ERROR] Rescan: {e}")
     
     def handle_import_journals(self):
         """Handle import old journals request"""
         try:
             self.model.add_comms_message("[SYSTEM] Starting journal import...")
-            self.model.add_comms_message("[SYSTEM] This may take a few minutes...")
+            self.model.add_comms_message("[INFO] This may take a few minutes...")
             
             # Run import in background thread to not block UI
             import threading
@@ -419,14 +420,14 @@ class Earth2Presenter:
                     stats = importer.import_journal_directory(journal_dir)
                     
                     # Report results
-                    self.model.add_comms_message(f"[IMPORT] Files processed: {stats['files_processed']}")
-                    self.model.add_comms_message(f"[IMPORT] Candidates found: {stats['candidates_found']}")
-                    self.model.add_comms_message(f"[IMPORT] Duplicates skipped: {stats['duplicates_skipped']}")
+                    self.model.add_comms_message(f"[INFO] Files processed: {stats['files_processed']}")
+                    self.model.add_comms_message(f"[INFO] Candidates found: {stats['candidates_found']}")
+                    self.model.add_comms_message(f"[INFO] Duplicates skipped: {stats['duplicates_skipped']}")
                     
                     if stats['errors'] > 0:
-                        self.model.add_comms_message(f"[WARNING] Errors: {stats['errors']}")
+                        self.model.add_comms_message(f"[WARNING] Errors encountered: {stats['errors']}")
                     
-                    self.model.add_comms_message("[IMPORT] Import complete!")
+                    self.model.add_comms_message("[INFO] Import complete!")
                     
                     # Reload ALL stats and data to show new data
                     self.model.load_stats_from_db()
@@ -434,13 +435,13 @@ class Earth2Presenter:
                     
                     # Show current stats for debugging
                     current_stats = self.model.get_stats()
-                    self.model.add_comms_message(f"[DEBUG] Total in DB: {current_stats.get('total_all', 0)}")
-                    self.model.add_comms_message(f"[DEBUG] ELW in DB: {current_stats.get('total_elw', 0)}")
+                    self.model.add_comms_message(f"[INFO] Total in DB: {current_stats.get('total_all', 0)}")
+                    self.model.add_comms_message(f"[INFO] ELW in DB: {current_stats.get('total_elw', 0)}")
                     
                     # Force UI refresh (it will auto-refresh in the next cycle)
                     # No need to manually call _update_statistics as it runs in refresh loop
                     
-                    self.model.add_comms_message("[IMPORT] Statistics updated!")
+                    self.model.add_comms_message("[INFO] Statistics updated!")
                     
                 except Exception as e:
                     self.model.add_comms_message(f"[ERROR] Import failed: {e}")
@@ -456,30 +457,79 @@ class Earth2Presenter:
             print(f"[PRESENTER ERROR] Import journals: {e}")
 
     def handle_options(self):
-        """Handle Options button. Currently supports setting the export folder."""
+        """Handle Options button. Supports setting Data folder (DB/logs) + Export folder."""
         try:
             from pathlib import Path
             import json
 
-            current = str(self.config.get("EXPORT_DIR") or "")
-            new_path = self.view.show_options_dialog(current)
-            if not new_path:
+            current_export = str(self.config.get("EXPORT_DIR") or "")
+            current_data = str(self.config.get("OUTDIR") or "")
+            current_hotkey = str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
+            current_journal = str(self.config.get("JOURNAL_DIR") or "")
+
+            result = self.view.show_options_dialog(current_export, current_data, current_hotkey, current_journal)
+            if not result:
                 return
 
-            # Update runtime config
-            export_dir = Path(new_path)
+            data_dir = Path(result["data_dir"]).expanduser()
+            export_dir = Path(result["export_dir"]).expanduser()
+            journal_dir = Path(result.get("journal_dir") or current_journal or "").expanduser()
+
+            # Hotkey
+            requested_hotkey = str(result.get("hotkey_label") or result.get("hotkey") or "").strip() or current_hotkey
+            try:
+                from hotkey_manager import parse_hotkey_label
+                _p, _tk, normalized = parse_hotkey_label(requested_hotkey)
+                self.config["HOTKEY_LABEL"] = normalized
+            except Exception as e:
+                # Keep previous if invalid
+                try:
+                    from tkinter import messagebox
+                    messagebox.showwarning("Options", f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}", parent=self.view.root)
+                except Exception:
+                    pass
+                self.config["HOTKEY_LABEL"] = current_hotkey
+
+            old_data_dir = Path(self.config.get("OUTDIR") or data_dir)
+
+            # Update runtime config (exports can apply immediately)
             self.config["EXPORT_DIR"] = export_dir
+            # Journal directory can apply immediately
+            if str(journal_dir).strip():
+                self.config["JOURNAL_DIR"] = journal_dir
             self.config["OUTCSV"] = export_dir
 
-            # Persist to settings file (portable, stored next to DB)
+            # If data folder changed, update derived paths in config.
+            # NOTE: the database + observer storage are already open, so relocation requires restart.
+            if data_dir != old_data_dir:
+                self.config["OUTDIR"] = data_dir
+                self.config["SETTINGS_PATH"] = data_dir / "settings.json"
+                self.config["DB_PATH"] = data_dir / "DW3_Earth2.db"
+                self.config["LOGFILE"] = data_dir / "DW3_Earth2_Logger.log"
+
+                self.model.add_comms_message(f"[SYSTEM] Data folder set to: {data_dir}")
+                self.model.add_comms_message("[SYSTEM] Restart required to move the live database to the new folder.")
+            else:
+                self.model.add_comms_message(f"[SYSTEM] Data folder unchanged: {data_dir}")
+
+            self.model.add_comms_message(f"[SYSTEM] Export folder set to: {export_dir}")
+
+            # Persist settings (portable, stored next to DB)
             settings_path = self.config.get("SETTINGS_PATH")
             if settings_path:
                 settings_path = Path(settings_path)
                 settings_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"export_dir": str(export_dir)}
+                payload = {"export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
                 settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-            self.model.add_comms_message(f"[OPTIONS] Export folder set to: {export_dir}")
+            # Persist bootstrap settings (stable location so OUTDIR can be relocated)
+            bootstrap_path = self.config.get("BOOTSTRAP_SETTINGS_PATH")
+            if bootstrap_path:
+                bootstrap_path = Path(bootstrap_path)
+                bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {"data_dir": str(data_dir), "export_dir": str(export_dir), "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
+                bootstrap_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
         except Exception as e:
             self.model.add_comms_message(f"[ERROR] Failed to save options: {e}")
             print(f"[PRESENTER ERROR] Options: {e}")
@@ -566,9 +616,9 @@ class Earth2Presenter:
                 
                 if score_parts:
                     score_text = " | ".join(score_parts)
-                    self.model.add_comms_message(f"[SCAN] {body_name} | {rating} | {score_text}")
+                    self.model.add_comms_message(f"[INFO] {body_name} | {rating} | {score_text}")
                 else:
-                    self.model.add_comms_message(f"[SCAN] {body_name} | {rating}")
+                    self.model.add_comms_message(f"[INFO] {body_name} | {rating}")
                 
                 # Calculate similarity breakdown if score is available
                 similarity_breakdown = {}

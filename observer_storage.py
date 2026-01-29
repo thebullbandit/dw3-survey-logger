@@ -129,8 +129,11 @@ class ObserverStorage:
                 corrected_n INTEGER,
                 max_distance REAL,
 
-                -- Stable per-slice ordinal (assigned on first save)
+                -- Slice sample ordinal: increments only when CMDR marks a slice sample COMPLETE
                 sample_index INTEGER,
+
+                -- System ordinal within the current slice sample run (resets when sample_index increments)
+                system_index INTEGER,
 
                 -- Amendment tracking
                 supersedes_id TEXT,
@@ -173,6 +176,12 @@ class ObserverStorage:
         except sqlite3.OperationalError:
             pass
 
+        # Add system_index column for existing databases (best effort)
+        try:
+            self.conn.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN system_index INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
         # Index for sample_index (useful for ordering)
         try:
             self.conn.execute(
@@ -205,9 +214,13 @@ class ObserverStorage:
             raise ValueError(f"Validation failed: {'; '.join(errors)}")
 
         with self._lock:
-            # Assign stable per-slice ordinal on first save
+            # Assign slice sample index (only increments when a prior sample was marked COMPLETE)
             if note.sample_index is None:
-                note.sample_index = self._get_next_sample_index(note)
+                note.sample_index = self._get_current_slice_sample_index(note.session_id, note.z_bin)
+
+            # Assign system index within this slice sample run (resets when sample_index increments)
+            if getattr(note, "system_index", None) is None:
+                note.system_index = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index)
 
             # Get previous hash for chain
             prev_hash = self._get_latest_hash()
@@ -221,8 +234,47 @@ class ObserverStorage:
 
             return note.id
 
+
+    def _get_current_slice_sample_index(self, session_id: str, z_bin: int) -> int:
+        """Return the active slice-sample index for (session_id, z_bin).
+
+        Increments only when a prior ACTIVE record for this slice was saved with slice_status='complete'.
+        """
+        cursor = self.conn.execute(
+            f"""
+            SELECT COALESCE(SUM(CASE WHEN slice_status = 'complete' THEN 1 ELSE 0 END), 0) + 1 AS idx
+            FROM {self.TABLE_NAME}
+            WHERE session_id = ?
+              AND z_bin = ?
+              AND record_status = 'active'
+            """,
+            (session_id, z_bin),
+        )
+        row = cursor.fetchone()
+        return int(row["idx"]) if row and row["idx"] is not None else 1
+
+    def _get_next_system_index(self, session_id: str, z_bin: int, sample_index: int) -> int:
+        """Return next system_index for the current (session_id, z_bin, sample_index) run."""
+        cursor = self.conn.execute(
+            f"""
+            SELECT COALESCE(MAX(system_index), 0) + 1 AS next_idx
+            FROM {self.TABLE_NAME}
+            WHERE session_id = ?
+              AND z_bin = ?
+              AND sample_index = ?
+              AND record_status = 'active'
+            """,
+            (session_id, z_bin, sample_index),
+        )
+        row = cursor.fetchone()
+        return int(row["next_idx"]) if row and row["next_idx"] is not None else 1
+
+
     def _get_next_sample_index(self, note: ObserverNote) -> int:
-        """Compute next sample_index for (session_id, system, z_bin)."""
+        """Legacy: compute next sample_index for (session_id, system, z_bin).
+
+        Current logic uses _get_current_slice_sample_index().
+        """
         # Prefer system_address when available (stable game ID)
         if note.system_address is not None:
             where = "session_id = ? AND system_address = ? AND z_bin = ?"
@@ -343,6 +395,7 @@ class ObserverStorage:
                 z_bin=original.z_bin,
                 session_id=original.session_id,
                 sample_index=original.sample_index,
+                system_index=original.system_index,
                 slice_status=SliceStatus.DISCARD,
                 notes=f"DELETED: {reason}",
                 supersedes_id=original_id,
@@ -369,9 +422,10 @@ class ObserverStorage:
                 z_bin, session_id, slice_status, completeness_confidence,
                 system_count, corrected_n, max_distance,
                 sample_index,
+                system_index,
                 supersedes_id, record_status,
                 payload_json, payload_hash, prev_hash, schema_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             note.id,
             note.created_at_utc,
@@ -386,6 +440,7 @@ class ObserverStorage:
             note.corrected_n,
             note.max_distance,
             note.sample_index,
+            getattr(note, 'system_index', None),
             note.supersedes_id,
             note.record_status.value,
             note.to_json(),

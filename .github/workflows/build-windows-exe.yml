@@ -35,6 +35,9 @@ jobs:
             --name "DW3 Survey Logger" `
             --icon "assets\earth2.ico" `
             --add-data "assets;assets" `
+            --collect-all pynput `
+            --hidden-import pynput `
+            --hidden-import pynput.keyboard `
             main.py
 
       - name: Package artifact

@@ -425,6 +425,18 @@ class JournalMonitor:
             except (ValueError, TypeError):
                 pass
 
+        # Update model 'signal' + current context so Status/Target Lock can reflect jumps
+        # (Add Observation uses JournalStateManager; the main panels use model status.)
+        try:
+            if self.current_system:
+                self.model.update_status({
+                    "last_signal_local": self.current_system,
+                    # Populate target-lock context even when we haven't logged a candidate yet
+                    "last_system": self.current_system,
+                })
+        except Exception:
+            pass
+
         # Update state manager (Location event only, FSDJump handled separately)
         if self.state_manager and evt.get("event") == "Location":
             self.state_manager.on_location(evt)
@@ -449,6 +461,27 @@ class JournalMonitor:
         # Update state manager
         if self.state_manager:
             self.state_manager.on_scan(evt)
+        # Keep Target Lock in sync with what you're currently scanning.
+        # If this scan turns into a candidate, presenter.log_candidate() will overwrite these fields.
+        try:
+            system = (evt.get("StarSystem") or self.current_system or "").strip()
+            body_name = (evt.get("BodyName") or "").strip()
+            planet_class = (evt.get("PlanetClass") or "").strip()
+            if system:
+                update = {"last_system": system}
+                if body_name:
+                    update.update({
+                        "last_body": body_name,
+                        "last_type": planet_class or "-",
+                        "last_rating": "-",
+                        "last_worth": "-",
+                        "last_reason": "Scanning...",
+                        "last_inara": self.model.generate_inara_link(system),
+                    })
+                self.model.update_status(update)
+        except Exception:
+            pass
+
 
         # Check if this is an Earth2 candidate
         candidate_data = self._parse_candidate(evt, "Scan")
@@ -520,34 +553,64 @@ class JournalMonitor:
             "timestamp_utc": evt.get("timestamp", ""),
             "event": event_type,
             "event_id": event_id,
+
+            # Identity / session
             "cmdr_name": self.current_cmdr or "Unknown",
             "session_id": self.current_session_id or "",
+
+            # System / body
             "star_system": system,
             "system_address": system_address,
-            "x": x,
-            "y": y,
-            "z": z,
-            "dist_from_sol_ly": dist_sol,
             "body_name": body_name,
             "body_id": evt.get("BodyID"),
-            "planet_class": planet_class,
-            "terraform_state": terraform_state,
+
+            # Classification
             "candidate_type": candidate_type,
-            "surface_temperature_k": temp_k,
-            "surface_temperature_c": self.model.kelvin_to_celsius(temp_k),
-            "gravity_g": gravity_g,
-            "distance_to_arrival_ls": dist_ls,
+            "terraform_state": terraform_state,
+            "planet_class": planet_class,
+
+            # Key scan properties
+            "distance_from_arrival_ls": dist_ls,
+            "surface_temp_k": temp_k,
+            "surface_gravity_g": gravity_g,
+
+            # Extra scan properties (may be missing in journal event depending on body)
             "atmosphere": evt.get("Atmosphere", ""),
-            "landable": evt.get("Landable", ""),
-            "was_discovered": evt.get("WasDiscovered", ""),
-            "was_mapped": evt.get("WasMapped", ""),
-            "dss_mapped": "",
+            "volcanism": evt.get("Volcanism", ""),
+            "mass_em": self._to_float(evt.get("MassEM")),
+            "radius_km": self._to_float(evt.get("Radius")),
+            "surface_pressure_atm": self._to_float(evt.get("SurfacePressure")),
+            "landable": evt.get("Landable"),
+            "tidal_lock": evt.get("TidalLock"),
+
+            # Orbital / rotation (journal uses seconds for many of these; store as days when possible)
+            "rotation_period_days": self._to_float(evt.get("RotationPeriod")) / 86400.0 if evt.get("RotationPeriod") not in (None, "") else None,
+            "orbital_period_days": self._to_float(evt.get("OrbitalPeriod")) / 86400.0 if evt.get("OrbitalPeriod") not in (None, "") else None,
+            "semi_major_axis_au": self._to_float(evt.get("SemiMajorAxis")) / 149597870700.0 if evt.get("SemiMajorAxis") not in (None, "") else None,
+            "orbital_eccentricity": self._to_float(evt.get("Eccentricity")),
+            "orbital_inclination_deg": self._to_float(evt.get("OrbitalInclination")),
+            "arg_of_periapsis_deg": self._to_float(evt.get("Periapsis")),
+            "ascending_node_deg": self._to_float(evt.get("AscendingNode")),
+            "mean_anomaly_deg": self._to_float(evt.get("MeanAnomaly")),
+            "axial_tilt_deg": self._to_float(evt.get("AxialTilt")),
+
+            # Flags
+            "was_discovered": evt.get("WasDiscovered"),
+            "was_mapped": evt.get("WasMapped"),
+
+            # Ratings
             "earth2_rating": rating,
+            "similarity_score": similarity_score,
+
+            # Worthiness
             "worth_landing": worth,
-            "worth_landing_reason": reason,
-            "inara_system_link": self.model.generate_inara_link(system),
-            "screenshot_link": "",
-            "notes": "",
+            "worth_reason": reason,
+
+            # Location
+            "distance_from_sol_ly": dist_sol,
+            "star_pos_x": x,
+            "star_pos_y": y,
+            "star_pos_z": z,
         }
         
         return candidate_data
@@ -609,6 +672,26 @@ class JournalMonitor:
     def request_rescan(self):
         """Request a full journal rescan"""
         self.rescan_event.set()
+
+    def set_journal_dir(self, journal_dir: Path):
+        """Update the journal directory (applies live) and trigger a rescan."""
+        journal_dir = Path(journal_dir).expanduser()
+        self.journal_dir = journal_dir
+        self.file_reader.journal_dir = journal_dir
+
+        # NavRoute.json (drift guardrail)
+        self._navroute_path = self.journal_dir / "NavRoute.json"
+        self._navroute_mtime = 0.0
+        self._navroute_cache = []
+
+        # Force file reopen on next loop
+        try:
+            self.file_reader.close()
+        except Exception:
+            pass
+
+        # Trigger rescan to re-seed state (cmdr/system) from the new folder
+        self.request_rescan()
     
     def _monitor_loop(self):
         """Main monitoring loop (runs in background thread)"""

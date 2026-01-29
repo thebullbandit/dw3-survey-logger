@@ -8,7 +8,7 @@ events, scores "Earth-like" candidates, and stores everything in
 **crash-safe SQLite (WAL)**. Includes an **Observer overlay** for extra
 human notes and **drift guardrails** to help keep survey legs straight.
 
-> Current build shown in code: **v0.9.1 BETA**
+> Current build shown in code: **v0.9.6 BETA**
 
 ------------------------------------------------------------------------
 

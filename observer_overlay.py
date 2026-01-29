@@ -209,6 +209,10 @@ class ObserverOverlay:
         # Current context (set on show)
         self._context: Optional[CurrentContext] = None
 
+        # Slice lock: keep the same z-bin for an IN_PROGRESS splice run
+        # so system_index counts up across multiple saved systems.
+        self._locked_z_bin: Optional[int] = None
+
         # Tkinter variables
         self._slice_status_var: Optional[tk.StringVar] = None
         self._confidence_var: Optional[tk.IntVar] = None
@@ -230,6 +234,7 @@ class ObserverOverlay:
 
         # Header widgets
         self._lbl_hotkey: Optional[tk.Label] = None
+        self._lbl_slice_lock: Optional[tk.Label] = None
 
     def show(self, context: Optional[CurrentContext] = None):
         """
@@ -502,6 +507,24 @@ class ObserverOverlay:
             bg=self.colors.BG_PANEL
         )
         self._lbl_hotkey.grid(row=3, column=1, columnspan=3, sticky="w", pady=2)
+
+        # Row 5: Slice lock (helps explain splice counters)
+        tk.Label(
+            fields_frame,
+            text="SLICE LOCK:",
+            font=("Consolas", 9),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL
+        ).grid(row=4, column=0, sticky="e", padx=(0, 5), pady=2)
+
+        self._lbl_slice_lock = tk.Label(
+            fields_frame,
+            text="-",
+            font=("Consolas", 8),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL
+        )
+        self._lbl_slice_lock.grid(row=4, column=1, columnspan=3, sticky="w", pady=2)
 
     def _build_drift_section(self, parent: tk.Frame):
         """Build Drift Guardrail section (NavRoute guidance)."""
@@ -991,6 +1014,23 @@ class ObserverOverlay:
         z_bin = self._context.z_bin
         self._lbl_zbin.config(text=str(z_bin) if z_bin else "-")
 
+        # Slice lock logic:
+        # If the CMDR is saving multiple "in_progress" splice notes across different systems,
+        # we keep the z-bin locked so system_sample counts up instead of resetting to 1.
+        if z_bin is not None:
+            if self._locked_z_bin is None:
+                self._locked_z_bin = int(z_bin)
+
+        # Update slice-lock label (show locked vs current)
+        if hasattr(self, "_lbl_slice_lock") and self._lbl_slice_lock is not None:
+            if self._locked_z_bin is None:
+                self._lbl_slice_lock.config(text="not locked")
+            else:
+                if z_bin is not None and int(z_bin) != int(self._locked_z_bin):
+                    self._lbl_slice_lock.config(text=f"locked {self._locked_z_bin} (current {z_bin})")
+                else:
+                    self._lbl_slice_lock.config(text=f"locked {self._locked_z_bin}")
+
         # Position
         pos = self._context.star_pos
         if pos and pos != (0.0, 0.0, 0.0):
@@ -1115,6 +1155,13 @@ class ObserverOverlay:
                 )
                 return
 
+        # If the CMDR completed the slice, unlock so the next save starts a new splice sample.
+        try:
+            if note.slice_status == SliceStatus.COMPLETE:
+                self._locked_z_bin = None
+        except Exception:
+            pass
+
         # Close overlay
         self.hide()
 
@@ -1203,6 +1250,11 @@ class ObserverOverlay:
 
         # Notes
         note.notes = self._notes_widget.get("1.0", "end").strip()
+
+        # Keep z-bin stable while the slice is IN_PROGRESS so that
+        # (session_id, z_bin, sample_index) stays consistent and system_index increments.
+        if self._locked_z_bin is not None and note.slice_status == SliceStatus.IN_PROGRESS:
+            note.z_bin = int(self._locked_z_bin)
 
         return note
 

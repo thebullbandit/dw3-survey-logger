@@ -16,6 +16,7 @@ from utils import resource_path
 from pathlib import Path
 import sys
 import os
+import json
 
 # Add parent directory to path to import database module
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,24 +37,51 @@ from observer_models import ObserverNote
 # ============================================================================
 
 def get_config() -> dict:
-    """
-    Get application configuration
     
-    In the future, this could load from a config file (Step 6 of refactoring)
-    """
-    USERPROFILE = Path(os.environ.get("USERPROFILE", ""))
+    USERPROFILE = Path(os.environ.get("USERPROFILE", "")) or Path.home()
+
+    # Bootstrap settings (stable location so users can relocate OUTDIR)
+    # Windows: %USERPROFILE%/.dw3_survey_logger/settings.json
+    # Linux/macOS: ~/.dw3_survey_logger/settings.json
+    BOOTSTRAP_SETTINGS_PATH = Path.home() / ".dw3_survey_logger" / "settings.json"
+
+    # Default storage directory (can be overridden by bootstrap settings)
     OUTDIR = USERPROFILE / "Documents" / "DW3" / "Earth2"
-    
+
+    # Apply bootstrap overrides (data_dir + optional export_dir)
+    bootstrap_data_dir = None
+    bootstrap_export_dir = None
+    bootstrap_hotkey_label = None
+    bootstrap_journal_dir = None
+    try:
+        if BOOTSTRAP_SETTINGS_PATH.exists():
+            data = json.loads(BOOTSTRAP_SETTINGS_PATH.read_text(encoding="utf-8"))
+            bootstrap_data_dir = data.get("data_dir")
+            bootstrap_export_dir = data.get("export_dir")
+            bootstrap_hotkey_label = data.get("hotkey_label")
+            bootstrap_journal_dir = data.get("journal_dir")
+    except Exception:
+        # Bootstrap settings are optional; ignore if missing/corrupted
+        pass
+
+    if bootstrap_data_dir:
+        OUTDIR = Path(bootstrap_data_dir)
+
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.1 BETA",
+        "VERSION": "0.9.6 BETA",
+        
+        # Hotkey
+        "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
+
         
         # Paths
-        "JOURNAL_DIR": USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous",
+        "JOURNAL_DIR": Path(bootstrap_journal_dir).expanduser() if bootstrap_journal_dir else (USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous"),
         "OUTDIR": OUTDIR,
         "EXPORT_DIR": OUTDIR / "exports",
         "SETTINGS_PATH": OUTDIR / "settings.json",
+        "BOOTSTRAP_SETTINGS_PATH": BOOTSTRAP_SETTINGS_PATH,
         "DB_PATH": OUTDIR / "DW3_Earth2.db",
         "OUTCSV": OUTDIR / "exports",  # directory; exporter will create timestamped files
         "LOGFILE": OUTDIR / "DW3_Earth2_Logger.log",
@@ -106,8 +134,10 @@ def get_config() -> dict:
     }
 
     # Apply user settings overrides (portable, stored next to the DB)
+    # Priority:
+    #   1) OUTDIR/settings.json (portable with the DB)
+    #   2) Bootstrap settings (~/.dw3_survey_logger/settings.json)
     try:
-        import json
         settings_path = config.get("SETTINGS_PATH")
         if settings_path and Path(settings_path).exists():
             data = json.loads(Path(settings_path).read_text(encoding="utf-8"))
@@ -115,6 +145,12 @@ def get_config() -> dict:
             if export_dir:
                 config["EXPORT_DIR"] = Path(export_dir)
                 config["OUTCSV"] = Path(export_dir)
+            hotkey_label = data.get("hotkey_label")
+            if hotkey_label:
+                config["HOTKEY_LABEL"] = str(hotkey_label)
+        elif bootstrap_export_dir:
+            config["EXPORT_DIR"] = Path(bootstrap_export_dir)
+            config["OUTCSV"] = Path(bootstrap_export_dir)
     except Exception:
         # Settings are optional; ignore if corrupted
         pass
@@ -222,8 +258,9 @@ def main():
                 note_id = observer_storage.save(note)
                 if note.sample_index is not None:
                     presenter.add_comms_message(
-                        f"[OBSERVER] Saved: {note.slice_status.value} | Sample #{note.sample_index} (this slice)"
+                        f"[OBSERVER] Saved: {note.slice_status.value} | Sample #{note.sample_index} | System #{note.system_index}"
                     )
+                    
                 else:
                     presenter.add_comms_message(f"[OBSERVER] Saved: {note.slice_status.value}")
                 print(f"[MAIN] Observation saved with ID: {note_id}")
@@ -274,11 +311,20 @@ def main():
 
     from hotkey_manager import try_register_global_hotkey
 
-    # Preferred hotkey labels
+    # Preferred hotkey label (user-configurable via Options)
     # Default chosen to avoid NVIDIA overlay (Ctrl+Shift+O).
-    GLOBAL_HOTKEY_PYNPUT = "<ctrl>+<alt>+o"
-    GLOBAL_HOTKEY_LABEL = "Ctrl+Alt+O"
-    FALLBACK_HOTKEY_LABEL = "Ctrl+O"
+    from hotkey_manager import parse_hotkey_label
+
+    HOTKEY_LABEL = str(config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
+    try:
+        GLOBAL_HOTKEY_PYNPUT, FALLBACK_TK_SEQS, HOTKEY_LABEL = parse_hotkey_label(HOTKEY_LABEL)
+        config["HOTKEY_LABEL"] = HOTKEY_LABEL  # store normalized
+    except Exception:
+        # If config is invalid, fall back safely
+        GLOBAL_HOTKEY_PYNPUT, FALLBACK_TK_SEQS, HOTKEY_LABEL = "<ctrl>+<alt>+o", ["<Control-o>", "<Control-O>"], "Ctrl+Alt+O"
+        config["HOTKEY_LABEL"] = HOTKEY_LABEL
+
+    GLOBAL_HOTKEY_LABEL = HOTKEY_LABEL
 
     def _open_overlay_from_hotkey():
         # Pynput callbacks can run on a non-Tk thread, so always hop to Tk thread.
@@ -295,16 +341,19 @@ def main():
             open_observer_overlay()
             return "break"
 
-        root.bind("<Control-o>", on_hotkey_observation)
-        root.bind("<Control-O>", on_hotkey_observation)
+        for seq in FALLBACK_TK_SEQS:
+            try:
+                root.bind(seq, on_hotkey_observation)
+            except Exception:
+                pass
 
     if hk_status.ok:
         observer_overlay.hotkey_hint = f"{GLOBAL_HOTKEY_LABEL} (global)"
         presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {GLOBAL_HOTKEY_LABEL} (global)")
     else:
         _bind_fallback_hotkey()
-        observer_overlay.hotkey_hint = f"{FALLBACK_HOTKEY_LABEL} (in-app)"
-        presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {FALLBACK_HOTKEY_LABEL} (in-app)")
+        observer_overlay.hotkey_hint = f"{GLOBAL_HOTKEY_LABEL} (in-app)"
+        presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {GLOBAL_HOTKEY_LABEL} (in-app)")
         # Keep the error quiet, but useful for debugging in console.
         if hk_status.error:
             print(f"[HOTKEY] Global hotkey unavailable, using fallback. Reason: {hk_status.error}")

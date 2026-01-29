@@ -128,6 +128,11 @@ class ObserverNote:
     # Assigned by storage on first save. Preserved across amendments/deletions.
     sample_index: Optional[int] = None
 
+
+    # System ordinal within the current slice sample run (resets when slice sample completes).
+    # Assigned by storage on save.
+    system_index: Optional[int] = None
+
     # === CMDR-input: Slice status ===
     slice_status: SliceStatus = SliceStatus.IN_PROGRESS
     completeness_confidence: int = 0                # 0-100 slider value
@@ -175,6 +180,7 @@ class ObserverNote:
             "session_id": self.session_id,
             "body_name": self.body_name,
             "sample_index": self.sample_index,
+            "system_index": self.system_index,
             "slice_status": self.slice_status.value,
             "completeness_confidence": self.completeness_confidence,
             "sampling_method": self.sampling_method.value,
