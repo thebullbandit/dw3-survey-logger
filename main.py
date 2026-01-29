@@ -1,12 +1,3 @@
-"""
-Main Application - Updated with Journal Monitor and Observer System
-===================================================================
-
-Integrates the refactored JournalMonitor with the MVP architecture,
-plus the Observer Note system for CMDR observations.
-
-"""
-
 # ============================================================================
 # IMPORTS
 # ============================================================================
