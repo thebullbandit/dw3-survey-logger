@@ -35,6 +35,7 @@ jobs:
             --name "DW3 Survey Logger" `
             --icon "assets\earth2.ico" `
             --add-data "assets;assets" `
+            --add-data "templates\Stellar Density Scan Worksheet.xlsx;templates" `
             --collect-all pynput `
             --hidden-import pynput `
             --hidden-import pynput.keyboard `

@@ -30,8 +30,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional, Dict, Any, List
 
+import sys
+from pathlib import Path
 import openpyxl
 import re
+
+def resource_path(rel_path: str) -> Path:
+    """
+    Return absolute path to resource.
+    Works both when running from source and from a PyInstaller one-file EXE.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).resolve().parent
+    return base / rel_path
+
 
 
 def _safe_parse_iso(ts: str) -> Optional[datetime]:
@@ -54,7 +68,7 @@ def export_density_worksheet_from_notes(
     sheet_name: str = "Blank CW",
 ) -> Path:
    
-    template_path = Path(template_path)
+    template_path = resource_path("templates/Stellar Density Scan Worksheet.xlsx")
     output_path = Path(output_path)
     _cmdr = cmdr_name
 
