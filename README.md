@@ -3,11 +3,30 @@
 ## Project Status
 
 **This is still under active development.**  
-It was created in **8 days** to support **DW3 expeditions**.
+It was created in 8 days to support **DW3 expeditions**.
 
 https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734/
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
+
+## Known Issues (v0.9.8)
+
+The following issues are **known and confirmed** in version **0.9.8**.  
+They do **not affect collected data integrity**, but may impact usability.
+
+- **Journal folder setting does not persist**  
+  Changing the journal folder in Options appears to save, but reverts to the default when reopening the Options window.
+
+- **Window resizing is not adaptive**  
+  When resizing the application window, UI elements do not dynamically adjust.
+
+- **Observation window is too large**  
+  The observation panel can exceed practical screen space on smaller displays.
+
+- **Excel export folder cannot be changed**  
+  The export location is currently fixed and ignores user selection.
+
+These issues will be addressed as part of upcoming updates.
 
 ---
 
@@ -256,7 +275,6 @@ It is a community-built tool provided as-is.
 
 Bug reports and suggestions are welcome via GitHub Issues or Discord.  
 Please include logs and steps to reproduce where possible.
-
 
 ---
 
