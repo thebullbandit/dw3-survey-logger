@@ -29,13 +29,22 @@ from observer_models import ObserverNote
 
 def get_config() -> dict:
     """
-    Get application configuration
-    
-    In the future, this could load from a config file (Step 6 of refactoring)
-    """
-    USERPROFILE = Path(os.environ.get("USERPROFILE", "")) or Path.home()
+    Get application configuration.
 
-    # Bootstrap settings (stable location so users can relocate OUTDIR)
+    Loads bootstrap settings from a stable location so the user can relocate OUTDIR.
+    Portable settings (next to the DB) can override export_dir and hotkey_label,
+    but journal_dir is intentionally taken from bootstrap to avoid "revert" surprises
+    when OUTDIR points at an older folder containing a stale settings.json.
+    """
+    import os
+    import json
+    from pathlib import Path
+
+    # Prefer USERPROFILE on Windows, but never allow it to become "." (Path(""))
+    userprofile_env = os.environ.get("USERPROFILE")
+    USERPROFILE = Path(userprofile_env) if userprofile_env else Path.home()
+
+    # Bootstrap settings (stable location so users can relocate OUTDIR safely)
     # Windows: %USERPROFILE%/.dw3_survey_logger/settings.json
     # Linux/macOS: ~/.dw3_survey_logger/settings.json
     BOOTSTRAP_SETTINGS_PATH = Path.home() / ".dw3_survey_logger" / "settings.json"
@@ -43,11 +52,12 @@ def get_config() -> dict:
     # Default storage directory (can be overridden by bootstrap settings)
     OUTDIR = USERPROFILE / "Documents" / "DW3" / "Earth2"
 
-    # Apply bootstrap overrides (data_dir + optional export_dir)
+    # Bootstrap overrides
     bootstrap_data_dir = None
     bootstrap_export_dir = None
     bootstrap_hotkey_label = None
     bootstrap_journal_dir = None
+
     try:
         if BOOTSTRAP_SETTINGS_PATH.exists():
             data = json.loads(BOOTSTRAP_SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -56,44 +66,52 @@ def get_config() -> dict:
             bootstrap_hotkey_label = data.get("hotkey_label")
             bootstrap_journal_dir = data.get("journal_dir")
     except Exception:
-        # Bootstrap settings are optional; ignore if missing/corrupted
+        # optional; ignore corrupted/missing
         pass
 
     if bootstrap_data_dir:
-        OUTDIR = Path(bootstrap_data_dir)
+        OUTDIR = Path(os.path.expandvars(str(bootstrap_data_dir))).expanduser()
 
+    # Default Elite journal path
+    default_journal = USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous"
+    JOURNAL_DIR = (
+        Path(os.path.expandvars(str(bootstrap_journal_dir))).expanduser()
+        if bootstrap_journal_dir
+        else default_journal
+    )
+
+    # Base config
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.8",
-        
+        "VERSION": "0.9.9",
+
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
 
-        
         # Paths
-        "JOURNAL_DIR": Path(bootstrap_journal_dir).expanduser() if bootstrap_journal_dir else (USERPROFILE / "Saved Games" / "Frontier Developments" / "Elite Dangerous"),
+        "JOURNAL_DIR": JOURNAL_DIR,
         "OUTDIR": OUTDIR,
         "EXPORT_DIR": OUTDIR / "exports",
         "SETTINGS_PATH": OUTDIR / "settings.json",
         "BOOTSTRAP_SETTINGS_PATH": BOOTSTRAP_SETTINGS_PATH,
         "DB_PATH": OUTDIR / "DW3_Earth2.db",
-        "OUTCSV": OUTDIR / "exports",  # directory; exporter will create timestamped files
+        "OUTCSV": OUTDIR / "exports",
         "LOGFILE": OUTDIR / "DW3_Earth2_Logger.log",
         "ASSET_PATH": resource_path("assets"),
         "ICON_NAME": "earth2.ico",
-        
+
         # Monitoring settings
         "POLL_SECONDS_FAST": 0.1,
         "POLL_SECONDS_SLOW": 0.25,
         "TEST_MODE": False,
         "TEST_READ_FROM_START": True,
-        
+
         # UI settings
         "UI_REFRESH_FAST_MS": 100,
         "UI_REFRESH_SLOW_MS": 250,
         "COMMS_MAX_LINES": 150,
-        
+
         # Rating criteria
         "TEMP_A_MIN": 240.0,
         "TEMP_A_MAX": 320.0,
@@ -105,14 +123,14 @@ def get_config() -> dict:
         "GRAV_B_MAX": 1.80,
         "DIST_A_MAX": 5000.0,
         "DIST_B_MAX": 15000.0,
-        
+
         # Worth landing criteria
         "WORTH_DIST_MAX": 8000.0,
         "WORTH_TEMP_MIN": 210.0,
         "WORTH_TEMP_MAX": 340.0,
         "WORTH_GRAV_MAX": 1.60,
-        
-        # Color scheme
+
+        # Color scheme (DO NOT REMOVE)
         "BG": "#0a0a0f",
         "BG_PANEL": "#12121a",
         "BG_FIELD": "#1a1a28",
@@ -128,30 +146,34 @@ def get_config() -> dict:
         "LED_IDLE": "#888888",
     }
 
-    # Apply user settings overrides (portable, stored next to the DB)
-    # Priority:
-    #   1) OUTDIR/settings.json (portable with the DB)
-    #   2) Bootstrap settings (~/.dw3_survey_logger/settings.json)
+    # Portable settings next to the DB:
+    # allow export_dir + hotkey_label overrides, but NOT journal_dir.
     try:
         settings_path = config.get("SETTINGS_PATH")
         if settings_path and Path(settings_path).exists():
             data = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+
             export_dir = data.get("export_dir")
             if export_dir:
-                config["EXPORT_DIR"] = Path(export_dir)
-                config["OUTCSV"] = Path(export_dir)
+                exp = Path(os.path.expandvars(str(export_dir))).expanduser()
+                config["EXPORT_DIR"] = exp
+                config["OUTCSV"] = exp
+
             hotkey_label = data.get("hotkey_label")
             if hotkey_label:
                 config["HOTKEY_LABEL"] = str(hotkey_label)
+
+            # Intentionally ignore portable journal_dir to prevent "revert" surprises.
+
         elif bootstrap_export_dir:
-            config["EXPORT_DIR"] = Path(bootstrap_export_dir)
-            config["OUTCSV"] = Path(bootstrap_export_dir)
+            exp = Path(os.path.expandvars(str(bootstrap_export_dir))).expanduser()
+            config["EXPORT_DIR"] = exp
+            config["OUTCSV"] = exp
+
     except Exception:
-        # Settings are optional; ignore if corrupted
         pass
 
     return config
-
 
 # ============================================================================
 # APPLICATION SETUP
@@ -314,13 +336,9 @@ def main():
         observer_overlay.show(context)
         presenter.add_comms_message("[OBSERVER] Overlay opened")
 
-    # ========================================================================
-    # ADD OBSERVATION BUTTON TO UI
-    # ========================================================================
-
     # Add button to control frame
     btn_observation = tk.Button(
-        view.widgets["btn_export_csv"].master,  # Same parent as other buttons
+        view.widgets.get("btn_export_menu", view.root).master if view.widgets.get("btn_export_menu") else view.root,  # Control frame parent
         text="Add Observation",
         font=("Consolas", 9),
         bg=config["GREEN"],
@@ -330,16 +348,10 @@ def main():
     )
     btn_observation.pack(side="left", padx=5)
 
-    # ========================================================================
-    # HOTKEY: Global (best effort) with in-app fallback
-    # ========================================================================
-    # Goal: minimal friction. If a system-wide hotkey can be registered, use it.
-    # If not (missing pynput, Wayland, permissions), fall back to an in-app bind.
-
     from hotkey_manager import try_register_global_hotkey
 
     # Preferred hotkey label (user-configurable via Options)
-    # Default chosen to avoid NVIDIA overlay (Ctrl+Shift+O).
+    # Default chosen to (Ctrl+Shift+O).
     from hotkey_manager import parse_hotkey_label
 
     HOTKEY_LABEL = str(config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
@@ -389,17 +401,6 @@ def main():
     if observer_overlay is not None:
         observer_overlay.hotkey_hint = hotkey_hint_text
 
-    # ========================================================================
-    # OPTIONAL: AUTO-TRIGGER ON Z-BIN CHANGE
-    # ========================================================================
-
-    # Uncomment below to auto-open overlay when crossing Z-bin boundaries
-    # def on_z_bin_change(event):
-    #     """Auto-open overlay when Z-bin changes"""
-    #     presenter.add_comms_message(f"[OBSERVER] Z-bin changed: {event.old_z_bin} -> {event.new_z_bin}")
-    #     # Optionally auto-open: open_observer_overlay()
-    #
-    # state_manager.register_z_bin_callback(on_z_bin_change)
 
     # Add startup messages
     presenter.add_comms_message("[SYSTEM] Application started")

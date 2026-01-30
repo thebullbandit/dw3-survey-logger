@@ -21,6 +21,7 @@ Communicates with Presenter for all data operations.
 # ============================================================================
 
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk
 from tkinter import filedialog, messagebox
@@ -67,6 +68,7 @@ class Earth2View:
         # Color scheme
         self._setup_colors()
         
+        self._setup_fonts()
     def _setup_colors(self):
         """Setup color scheme from config"""
         self.colors = {
@@ -84,6 +86,71 @@ class Earth2View:
             "LED_ACTIVE": self.config.get("LED_ACTIVE", "#00ff88"),
             "LED_IDLE": self.config.get("LED_IDLE", "#888888"),
         }
+
+    def _setup_fonts(self):
+        """Central font setup (UI uses sans-serif, data/logs use monospace)."""
+        # Pick a title font that feels more "instrument panel" than default UI text.
+        # Falls back gracefully if the font isn't installed.
+        try:
+            fam = set(tkfont.families(self.root))
+        except Exception:
+            fam = set()
+
+        def _pick(*names: str, fallback: str = "Segoe UI") -> str:
+            for n in names:
+                if n in fam:
+                    return n
+            return fallback
+
+        title_family = _pick("Bahnschrift", "Segoe UI Variable Display", "Segoe UI", "Arial")
+
+        self.fonts = {
+            "TITLE": (title_family, 16, "bold"),
+            "SECTION": ("Segoe UI", 10, "bold"),
+            "UI": ("Segoe UI", 9),
+            "UI_BOLD": ("Segoe UI", 9, "bold"),
+            "UI_SMALL": ("Segoe UI", 8),
+            "UI_SMALL_BOLD": ("Segoe UI", 8, "bold"),
+            "MONO": ("Consolas", 9),
+            "MONO_BOLD": ("Consolas", 9, "bold"),
+            "MONO_SMALL": ("Consolas", 8),
+        }
+
+    def _style_button(self, btn: tk.Widget, *, accent: bool = False, success: bool = False):
+        """Apply a flat, HUD-friendly button style."""
+        bg = self.colors["ORANGE"] if accent else (self.colors["GREEN"] if success else self.colors["BG_PANEL"])
+        fg = "#000000" if (accent or success) else self.colors["TEXT"]
+
+        cfg = {
+            "font": self.fonts["UI"],
+            "bg": bg,
+            "fg": fg,
+            "activebackground": bg,
+            "activeforeground": fg,
+            "relief": "flat",
+            "bd": 0,
+            "highlightthickness": 1,
+            "highlightbackground": self.colors["BORDER_INNER"],
+            "highlightcolor": self.colors["ORANGE_DIM"],
+            "padx": 10,
+            "pady": 3,
+            "cursor": "hand2",
+        }
+        # Best-effort apply (some widgets don't support all options)
+        for k, v in cfg.items():
+            try:
+                btn.configure(**{k: v})
+            except Exception:
+                pass
+
+        # Subtle hover affordance for non-accent buttons
+        if not (accent or success):
+            try:
+                btn.bind("<Enter>", lambda _e: btn.configure(highlightbackground=self.colors["BORDER_OUTER"]))
+                btn.bind("<Leave>", lambda _e: btn.configure(highlightbackground=self.colors["BORDER_INNER"]))
+            except Exception:
+                pass
+
     
     def build_ui(self):
         """Build the complete UI"""
@@ -94,31 +161,355 @@ class Earth2View:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
-        # Use 90% of screen height to ensure everything is visible
-        window_width = 1000
-        window_height = int(screen_height * 0.90)  # 90% of screen height
+        
+        window_width = 900
+        window_height = min(640, int(screen_height * 0.78))  # compact default, still tall enough
         
         # Set window size and position (centered)
         x_position = (screen_width - window_width) // 2
         y_position = (screen_height - window_height) // 2
         
         self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
-        self.root.minsize(1000, 850)
+        
+        # DPI-aware minimum size (works across machines)
+        try:
+            scale = float(self.root.tk.call("tk", "scaling"))
+        except Exception:
+            scale = 1.0
+        min_w = int(680 * scale)
+        min_h = int(440 * scale)
+        self.root.minsize(min_w, min_h)
+        
         self.root.configure(bg=self.colors["BG"])
         
         # Try to load icon
         self._load_icon()
-        
+
         # Build main layout
         self._build_header()
-        self._build_status_panel()
-        self._build_target_lock()
-        self._build_statistics_panel()
-        self._build_comms_panel()
         self._build_controls()
         self._build_footer()
-        
+
+        # Body: grid-based layout for predictable resizing
+        self.body = tk.Frame(self.root, bg=self.colors["BG"])
+        self.body.pack(fill="both", expand=True)
+
+        # Grid: HUD (row 0), main area (row 1), COMMS drawer (row 2)
+        # IMPORTANT UX: Keep Target/Stats panels content-sized; give extra vertical space to COMMS.
+        self.body.grid_rowconfigure(1, weight=0)
+        self.body.grid_rowconfigure(2, weight=1)
+        self.body.grid_columnconfigure(0, weight=3)
+        self.body.grid_columnconfigure(1, weight=1)
+
+        # HUD strip replaces the tall STATUS panel
+        self._build_hud_strip(parent=self.body)
+        self.widgets["hud_strip"].grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 6))
+        # Main work area: Full-width Statistics (Target Lock panel removed)
+        # We still build Target Lock widgets invisibly so presenter updates keep working.
+        stats_host = tk.Frame(self.body, bg=self.colors["BG"])
+        stats_host.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
+        stats_host.grid_columnconfigure(0, weight=1)
+
+        # Build hidden target-lock widgets for compatibility
+        self._build_target_lock(parent=stats_host, visible=False)
+
+        # Visible stats panel
+        self._build_statistics_panel(parent=stats_host)
+
+        # Bottom drawer: COMMS (collapsible)
+        self._build_comms_drawer(parent=self.body)
+        # COMMS gets the vertical expansion when the window is tall
+        self.widgets["comms_drawer"].grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 8))
+
+
+        # Responsive text wrapping for the Target Lock reason line
+        if not getattr(self, "_wrap_bound", False):
+            def _on_root_resize(event=None):
+                try:
+                    if event is not None and event.widget is not self.root:
+                        return
+                    lbl = self.widgets.get("lbl_reason")
+                    if lbl:
+                        w = max(400, self.root.winfo_width() - 80)
+                        lbl.configure(wraplength=w)
+                except Exception:
+                    pass
+            self.root.bind("<Configure>", _on_root_resize)
+            self._wrap_bound = True
+
+        # -----------------------------------------------------------------
+        # UX GUARDFIX: COMMS must be visible at startup.
+        # - User must NOT be able to resize the window to hide COMMS.
+        # - Only the COMMS toggle button is allowed to collapse/expand
+        #   the window height.
+        # -----------------------------------------------------------------
+        self._init_comms_window_behavior()
+
         return self.root
+
+    # ---------------------------------------------------------------------
+    # WINDOW / COMMS DRAWER SIZE MANAGEMENT
+    # ---------------------------------------------------------------------
+    def _init_comms_window_behavior(self):
+        """Initialize fixed-size window behavior and COMMS startup state.
+
+        Startup requirement:
+          - COMMS is visible (expanded).
+          - The user cannot resize the window manually.
+          - Clicking the COMMS toggle collapses/expands and resizes the
+            window programmatically.
+        """
+        # Safety: Only run once.
+        if getattr(self, "_comms_window_ready", False):
+            return
+
+        # Ensure COMMS starts expanded (visible).
+        self._comms_collapsed = False
+        self._apply_comms_state(initial=True)
+        self.root.update_idletasks()
+
+        # Use current geometry width as the fixed width.
+        w = self.root.winfo_width() or self.root.winfo_reqwidth()
+
+        # Expanded target height: at least what's currently shown, but never
+        # less than what the layout requires.
+        expanded_req_h = self.root.winfo_reqheight()
+        expanded_h = max(self.root.winfo_height() or 0, expanded_req_h)
+
+        # Apply expanded geometry (in case current window height is too small).
+        self.root.geometry(f"{w}x{expanded_h}")
+        self.root.update_idletasks()
+
+        # Capture expanded height after geometry settles.
+        self._comms_expanded_height = self.root.winfo_height() or expanded_h
+
+        # Measure collapsed height by temporarily collapsing COMMS.
+        self._comms_collapsed = True
+        self._apply_comms_state(initial=True)
+        self.root.update_idletasks()
+        self._comms_collapsed_height = self.root.winfo_reqheight()
+
+        # Restore expanded state for startup.
+        self._comms_collapsed = False
+        self._apply_comms_state(initial=True)
+        self.root.update_idletasks()
+        self.root.geometry(f"{w}x{self._comms_expanded_height}")
+        self.root.update_idletasks()
+
+        # Hard-disable manual resizing.
+        try:
+            self.root.resizable(False, False)
+        except Exception:
+            pass
+
+        # Clamp min/max to the current (expanded) geometry.
+        # This guarantees COMMS cannot be hidden by dragging the window.
+        try:
+            self.root.minsize(w, self._comms_expanded_height)
+            self.root.maxsize(w, self._comms_expanded_height)
+        except Exception:
+            pass
+
+        self._comms_window_ready = True
+
+    def _apply_window_size_for_comms_state(self):
+        """Resize window (programmatically) to match COMMS drawer state.
+
+        This is the ONLY allowed way the window height changes.
+        """
+        if not getattr(self, "_comms_window_ready", False):
+            return
+
+        # Recompute required heights defensively (different DPI/fonts).
+        self.root.update_idletasks()
+        w = self.root.winfo_width() or self.root.winfo_reqwidth()
+
+        if getattr(self, "_comms_collapsed", True):
+            # Collapsed height can vary slightly across systems.
+            self._comms_collapsed_height = max(
+                int(getattr(self, "_comms_collapsed_height", 0) or 0),
+                int(self.root.winfo_reqheight() or 0),
+            )
+            target_h = int(self._comms_collapsed_height)
+        else:
+            self._comms_expanded_height = max(
+                int(getattr(self, "_comms_expanded_height", 0) or 0),
+                int(self.root.winfo_reqheight() or 0),
+            )
+            target_h = int(self._comms_expanded_height)
+
+        # Apply geometry and clamp so the user can't drag-resize into a bad state.
+        try:
+            self.root.geometry(f"{w}x{target_h}")
+            self.root.update_idletasks()
+            self.root.minsize(w, target_h)
+            self.root.maxsize(w, target_h)
+        except Exception:
+            pass
+    
+    def _build_target_lock(self, parent=None, visible=True):
+        """Build target lock readout panel"""
+        parent = parent or getattr(self, "body", None) or self.root
+        panel = tk.LabelFrame(
+            parent,
+            text="TARGET LOCK",
+            font=self.fonts["UI_SMALL_BOLD"],
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"],
+            relief="solid",
+            bd=1
+        )
+
+        # Keep panel compact (no vertical stretching)
+        if visible:
+            panel.pack(fill="x", expand=False, padx=0, pady=0)
+
+        # System and Body (tighter padding)
+        info_frame = tk.Frame(panel, bg=self.colors["BG_PANEL"])
+        info_frame.pack(fill="x", padx=6, pady=(3, 2))
+
+        tk.Label(
+            info_frame,
+            text="SYSTEM:",
+            font=self.fonts["MONO"],
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(side="left", padx=(0, 5))
+
+        lbl_sys = tk.Label(
+            info_frame,
+            text="-",
+            font=self.fonts["MONO_BOLD"],
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_PANEL"]
+        )
+        lbl_sys.pack(side="left", padx=(0, 20))
+
+        tk.Label(
+            info_frame,
+            text="BODY:",
+            font=self.fonts["MONO"],
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(side="left", padx=(0, 5))
+
+        lbl_body = tk.Label(
+            info_frame,
+            text="-",
+            font=self.fonts["MONO_BOLD"],
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_PANEL"]
+        )
+        lbl_body.pack(side="left")
+
+        # Badges (tighter padding)
+        badge_frame = tk.Frame(panel, bg=self.colors["BG_PANEL"])
+        badge_frame.pack(fill="x", padx=6, pady=(0, 2))
+
+        badges = [
+            ("lbl_badge_type", "TYPE: -"),
+            ("lbl_badge_rating", "RATING: -"),
+            ("lbl_badge_worth", "WORTH: -"),
+        ]
+
+        for widget_name, default_text in badges:
+            badge = tk.Label(
+                badge_frame,
+                text=default_text,
+                font=self.fonts["MONO_SMALL"],
+                fg=self.colors["TEXT"],
+                bg=self.colors["BG_FIELD"],
+                relief="solid",
+                bd=1,
+                padx=6,
+                pady=2
+            )
+            badge.pack(side="left", padx=4)
+            self.widgets[widget_name] = badge
+
+        # Reason text (tight bottom padding)
+        lbl_reason = tk.Label(
+            panel,
+            text="-",
+            font=self.fonts["MONO"],
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_PANEL"],
+            wraplength=900,
+            justify="left"
+        )
+        lbl_reason.pack(fill="x", padx=6, pady=(0, 3))
+
+        # Inara link (tight)
+        lbl_inara = tk.Label(
+            panel,
+            text="-",
+            font=self.fonts["MONO_SMALL"],
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"],
+            cursor="hand2"
+        )
+        lbl_inara.pack(fill="x", padx=6, pady=(0, 3))
+
+        # Similarity breakdown section (hidden by default)
+        similarity_frame = tk.Frame(panel, bg=self.colors["BG_FIELD"])
+
+        similarity_title = tk.Label(
+            similarity_frame,
+            text="━━━ EARTH SIMILARITY ━━━",
+            font=self.fonts["MONO_BOLD"],
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_FIELD"]
+        )
+        similarity_title.pack(pady=(5, 3))
+
+        lbl_similarity_score = tk.Label(
+            similarity_frame,
+            text="Score: -",
+            font=self.fonts["MONO_BOLD"],
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_FIELD"]
+        )
+        lbl_similarity_score.pack(pady=2)
+
+        lbl_similarity_category = tk.Label(
+            similarity_frame,
+            text="Category: -",
+            font=self.fonts["MONO"],
+            fg=self.colors["GREEN"],
+            bg=self.colors["BG_FIELD"]
+        )
+        lbl_similarity_category.pack(pady=2)
+
+        metrics_frame = tk.Frame(similarity_frame, bg=self.colors["BG_FIELD"])
+        metrics_frame.pack(fill="x", padx=10, pady=5)
+
+        lbl_similarity_metrics = tk.Label(
+            metrics_frame,
+            text="",
+            font=self.fonts["MONO_SMALL"],
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_FIELD"],
+            justify="left"
+        )
+        lbl_similarity_metrics.pack(anchor="w")
+
+        self.widgets["target_lock_panel"] = panel
+        self.widgets["lbl_target_system"] = lbl_sys
+        self.widgets["lbl_target_body"] = lbl_body
+        self.widgets["lbl_reason"] = lbl_reason
+        self.widgets["lbl_inara"] = lbl_inara
+        self.widgets["similarity_frame"] = similarity_frame
+        self.widgets["lbl_similarity_score"] = lbl_similarity_score
+        self.widgets["lbl_similarity_category"] = lbl_similarity_category
+        self.widgets["lbl_similarity_metrics"] = lbl_similarity_metrics
+
+        # Click opens Inara link (set later when text updates)
+        def _open_inara(_e=None):
+            url = getattr(self, "_inara_url", None)
+            if url:
+                webbrowser.open(url)
+
+        lbl_inara.bind("<Button-1>", _open_inara)
     
     def _load_icon(self):
         """Load application icon if available"""
@@ -163,8 +554,8 @@ class Earth2View:
         # Title
         title_label = tk.Label(
             header,
-            text=f"⬢ {self.config['APP_NAME']} v{self.config['VERSION']}",
-            font=("Consolas", 16, "bold"),
+            text=f"{self.config['APP_NAME']} v{self.config['VERSION']}",
+            font=self.fonts["TITLE"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         )
@@ -178,7 +569,7 @@ class Earth2View:
         lbl_radio = tk.Label(
             led_frame,
             text="DW3 RADIO",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"],
             cursor="hand2"
@@ -197,7 +588,7 @@ class Earth2View:
         lbl_feed = tk.Label(
             led_frame,
             text="DATA FEED: INITIALIZING",
-            font=("Consolas", 10),
+            font=self.fonts["UI_SMALL"],
             fg=self.colors["TEXT"],
             bg=self.colors["BG_PANEL"]
         )
@@ -211,12 +602,185 @@ class Earth2View:
         self.widgets["lbl_feed"] = lbl_feed
         self.widgets["lbl_radio"] = lbl_radio
     
-    def _build_status_panel(self):
+    def _build_hud_strip(self, parent: tk.Widget):
+        """
+        Build a compact HUD strip (replaces the tall STATUS panel).
+        Keeps the same widget keys the presenter expects:
+          - lbl_scan_status, lbl_journal, lbl_cmdr, lbl_signal, lbl_skipped
+        """
+        hud = tk.Frame(parent, bg=self.colors["BG_PANEL"], bd=1, relief="solid")
+        self.widgets["hud_strip"] = hud
+
+        # Layout: 3 rows x 3 pairs
+        # Row 0: SCAN, JOURNAL, CMDR
+        # Row 1: TARGET (full-width line)
+        # Row 2: SIGNAL, SKIPPED, hint
+
+        for i in range(6):
+            hud.grid_columnconfigure(i, weight=1)
+
+        def add_field(row, col, label_text, key):
+            tk.Label(
+                hud,
+                text=label_text,
+                font=("Consolas", 9),
+                fg=self.colors["MUTED"],
+                bg=self.colors["BG_PANEL"],
+            ).grid(row=row, column=col, sticky="e", padx=(10, 4), pady=6)
+
+            val = tk.Label(
+                hud,
+                text="-",
+                font=("Consolas", 9),
+                fg=self.colors["TEXT"],
+                bg=self.colors["BG_PANEL"],
+                anchor="w",
+            )
+            val.grid(row=row, column=col + 1, sticky="w", padx=(0, 14), pady=6)
+            self.widgets[key] = val
+
+        # Row 0
+        add_field(0, 0, "SCAN:", "lbl_scan_status")
+        add_field(0, 2, "JOURNAL:", "lbl_journal")
+        add_field(0, 4, "CMDR:", "lbl_cmdr")
+
+        # Row 1: Target line (where your red line is)
+        tk.Label(
+            hud,
+            text="TARGET:",
+            font=("Consolas", 9),
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"],
+        ).grid(row=1, column=0, sticky="e", padx=(10, 4), pady=(0, 6))
+
+        lbl_target_line = tk.Label(
+            hud,
+            text="-",
+            font=("Consolas", 9),
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_PANEL"],
+            anchor="w",
+        )
+        lbl_target_line.grid(row=1, column=1, columnspan=5, sticky="ew", padx=(0, 12), pady=(0, 6))
+        self.widgets["lbl_target_line"] = lbl_target_line
+
+        # Row 2
+        add_field(2, 0, "SIGNAL:", "lbl_signal")
+        add_field(2, 2, "SKIPPED:", "lbl_skipped")
+
+        # Right-side subtle hint for hotkey / status (optional future use)
+        self.widgets["hud_hint"] = tk.Label(
+            hud,
+            text="",
+            font=("Consolas", 9),
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG_PANEL"],
+            anchor="e",
+        )
+        self.widgets["hud_hint"].grid(row=2, column=4, columnspan=2, sticky="e", padx=(0, 12), pady=6)
+
+        return hud
+
+    def _build_comms_drawer(self, parent: tk.Widget):
+        """
+        Build a collapsible COMMS drawer (small by default, expandable).
+        """
+        drawer = tk.Frame(parent, bg=self.colors["BG_PANEL"], bd=1, relief="solid")
+        self.widgets["comms_drawer"] = drawer
+
+        # Title bar
+        title = tk.Frame(drawer, bg=self.colors["BG_PANEL"])
+        title.pack(fill="x")
+
+        # Startup requirement: COMMS must be visible.
+        # We still allow collapsing later via the toggle.
+        self._comms_collapsed = False
+
+        self._btn_comms_toggle = tk.Button(
+            title,
+            text="▾",
+            font=self.fonts["UI_SMALL_BOLD"],
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"],
+            activebackground=self.colors["BG_PANEL"],
+            activeforeground=self.colors["ORANGE"],
+            bd=0,
+            relief="flat",
+            command=self._toggle_comms_drawer,
+        )
+        self._btn_comms_toggle.pack(side="left", padx=(8, 6), pady=4)
+
+        lbl = tk.Label(
+            title,
+            text="COMMS",
+            font=self.fonts["UI_SMALL_BOLD"],
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"],
+        )
+        lbl.pack(side="left", pady=4)
+
+        # Content area (text + scrollbar)
+        self._comms_content = tk.Frame(drawer, bg=self.colors["BG_PANEL"])
+        self._comms_content.pack(fill="x", padx=6, pady=(0, 6))
+
+        txt = tk.Text(
+            self._comms_content,
+            height=12,  # expanded default (visible on startup)
+            wrap="word",
+            font=("Consolas", 9),
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG_FIELD"],
+            insertbackground=self.colors["TEXT"],
+            relief="sunken",
+            bd=1,
+        )
+        txt.pack(side="left", fill="x", expand=True)
+
+        scrollbar = tk.Scrollbar(self._comms_content, command=txt.yview)
+        scrollbar.pack(side="right", fill="y")
+        txt.config(yscrollcommand=scrollbar.set)
+
+        self.widgets["txt_comms"] = txt
+
+        # Start expanded (COMMS visible)
+        self._apply_comms_state(initial=True)
+
+        return drawer
+
+    def _toggle_comms_drawer(self):
+        self._comms_collapsed = not getattr(self, "_comms_collapsed", True)
+        self._apply_comms_state()
+        self._apply_window_size_for_comms_state()
+
+    def _apply_comms_state(self, initial: bool = False):
+        """
+        Collapsed: short textbox height.
+        Expanded: taller textbox height.
+        """
+        txt = self.widgets.get("txt_comms")
+        if not txt:
+            return
+
+        if getattr(self, "_comms_collapsed", True):
+            # Collapsed
+            self._btn_comms_toggle.configure(text="▸")
+            txt.configure(height=5)
+            # Keep it visually compact
+            if not initial:
+                self.root.update_idletasks()
+        else:
+            self._btn_comms_toggle.configure(text="▾")
+            txt.configure(height=12)
+            if not initial:
+                self.root.update_idletasks()
+
+    def _build_status_panel(self, parent=None):
         """Build status information panel"""
+        parent = parent or getattr(self, "body", None) or self.root
         panel = tk.LabelFrame(
-            self.root,
+            parent,
             text="STATUS",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"],
             relief="ridge",
@@ -256,18 +820,23 @@ class Earth2View:
             
             self.widgets[widget_name] = label
     
-    def _build_target_lock(self):
+    def _build_target_lock(self, parent=None, visible=True):
         """Build target lock readout panel"""
+        parent = parent or getattr(self, "body", None) or self.root
         panel = tk.LabelFrame(
-            self.root,
+            parent,
             text="TARGET LOCK",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"],
-            relief="ridge",
-            bd=2
+            relief="solid",
+            bd=1
         )
-        panel.pack(fill="x", padx=10, pady=5)
+        # Important: allow this panel to expand vertically so we don't get a
+        # dead "empty band" between the main panels and the COMMS drawer.
+        # Parent already has padding via grid.
+        # Keep this panel content-sized vertically (compact HUD).
+        panel.pack(fill="x", expand=False, padx=0, pady=0)
         
         # System and Body
         info_frame = tk.Frame(panel, bg=self.colors["BG_PANEL"])
@@ -466,22 +1035,29 @@ class Earth2View:
         
         # Store references
         self.widgets["lbl_sys"] = lbl_sys
+        # Presenter compatibility aliases
+        self.widgets["lbl_target_system"] = lbl_sys
         self.widgets["lbl_body"] = lbl_body
+        # Presenter compatibility aliases
+        self.widgets["lbl_target_body"] = lbl_body
         self.widgets["lbl_reason"] = lbl_reason
         self.widgets["lbl_inara"] = lbl_inara
     
-    def _build_statistics_panel(self):
+    def _build_statistics_panel(self, parent=None):
         """Build statistics and ratings panel"""
+        parent = parent or getattr(self, "body", None) or self.root
         panel = tk.LabelFrame(
-            self.root,
+            parent,
             text="STATISTICS",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"],
-            relief="ridge",
-            bd=2
+            relief="solid",
+            bd=1
         )
-        panel.pack(fill="x", padx=10, pady=5)
+        # Same as Target Lock: stretch into available vertical space.
+        # Keep this panel content-sized vertically (compact HUD).
+        panel.pack(fill="x", expand=False, padx=0, pady=0)
         
         # Session stats
         session_frame = tk.Frame(panel, bg=self.colors["BG_PANEL"])
@@ -568,12 +1144,13 @@ class Earth2View:
         self.widgets["alltime_coverage_canvas"] = alltime_coverage_canvas
         self.widgets["lbl_alltime_coverage"] = lbl_alltime_coverage
     
-    def _build_comms_panel(self):
+    def _build_comms_panel(self, parent=None):
         """Build COMMS feed panel"""
+        parent = parent or getattr(self, "body", None) or self.root
         panel = tk.LabelFrame(
-            self.root,
+            parent,
             text="COMMS",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"],
             relief="ridge",
@@ -605,40 +1182,39 @@ class Earth2View:
         control_frame = tk.Frame(self.root, bg=self.colors["BG"])
         control_frame.pack(fill="x", padx=10, pady=5)
 
-        btn_export_csv = tk.Button(
+        # Export dropdown (consolidates CSV/DB/XLSX into one button)
+        export_btn = tk.Menubutton(
             control_frame,
-            text="Export CSV",
-            font=("Consolas", 9),
+            text="Export ▾",
+            font=self.fonts["UI"],
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
-            command=self._on_export_csv_clicked
+            activebackground=self.colors["BG_PANEL"],
+            activeforeground=self.colors["TEXT"],
+            relief="raised",
+            bd=1,
+            direction="below"
         )
-        btn_export_csv.pack(side="left", padx=5)
 
-        btn_export_db = tk.Button(
-            control_frame,
-            text="Export DB",
-            font=("Consolas", 9),
+        export_menu = tk.Menu(
+            export_btn,
+            tearoff=0,
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
-            command=self._on_export_db_clicked
+            activebackground=self.colors["ORANGE"],
+            activeforeground="#000000"
         )
-        btn_export_db.pack(side="left", padx=5)
+        export_menu.add_command(label="CSV", command=self._on_export_csv_clicked)
+        export_menu.add_command(label="Database", command=self._on_export_db_clicked)
+        export_menu.add_separator()
+        export_menu.add_command(label="Density XLSX", command=self._on_export_density_xlsx_clicked)
 
-
-        btn_export_density = tk.Button(
-            control_frame,
-            text="Export Density XLSX",
-            font=("Consolas", 9),
-            bg=self.colors["BG_PANEL"],
-            fg=self.colors["TEXT"],
-            command=self._on_export_density_xlsx_clicked
-        )
-        btn_export_density.pack(side="left", padx=5)
+        export_btn.config(menu=export_menu)
+        export_btn.pack(side="left", padx=5)
         btn_rescan = tk.Button(
             control_frame,
             text="Rescan Current Journal",
-            font=("Consolas", 9),
+            font=self.fonts["UI"],
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
             command=self._on_rescan_clicked
@@ -648,7 +1224,7 @@ class Earth2View:
         btn_import = tk.Button(
             control_frame,
             text="Import All Journals",
-            font=("Consolas", 9),
+            font=self.fonts["UI"],
             bg=self.colors["ORANGE"],
             fg="#000000",
             command=self._on_import_journals_clicked,
@@ -663,7 +1239,7 @@ class Earth2View:
         btn_about = tk.Button(
             control_frame,
             text="About",
-            font=("Consolas", 9),
+            font=self.fonts["UI"],
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
             command=self._on_about_clicked,
@@ -674,7 +1250,7 @@ class Earth2View:
         btn_options = tk.Button(
             control_frame,
             text="Options",
-            font=("Consolas", 9),
+            font=self.fonts["UI"],
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
             command=self._on_options_clicked,
@@ -682,12 +1258,19 @@ class Earth2View:
         )
         btn_options.pack(side="right", padx=5)
 
-        self.widgets["btn_export_csv"] = btn_export_csv
-        self.widgets["btn_export_db"] = btn_export_db
+
+        # Flat button styling (no 3D relief)
+        self._style_button(export_btn)
+        self._style_button(btn_rescan)
+        self._style_button(btn_import, accent=True)
+        self._style_button(btn_options)
+        self._style_button(btn_about)
+        self.widgets["btn_export_menu"] = export_btn
         self.widgets["btn_rescan"] = btn_rescan
         self.widgets["btn_import"] = btn_import
         self.widgets["btn_options"] = btn_options
         self.widgets["btn_about"] = btn_about
+
     
     def _build_footer(self):
         """Build footer with summary statistics"""
@@ -774,6 +1357,18 @@ class Earth2View:
         # Badge colors
         self._update_badge_colors(target_data.get("rating"), target_data.get("worth"))
         
+
+        # Inline TARGET line in HUD strip
+        try:
+            sysname = target_data.get('system', '-') or '-'
+            ttype = target_data.get('type', '-') or '-'
+            rating = target_data.get('rating', '-') or '-'
+            worth = target_data.get('worth', '-') or '-'
+            line = f"{sysname}   |   TYPE: {ttype}   RATING: {rating}   WORTH: {worth}"
+            self._update_if_changed('lbl_target_line', 'text', line, 'target_line')
+        except Exception:
+            pass
+
         # Reason and link
         self._update_if_changed("lbl_reason", "text", target_data.get("reason", "-"), "target_reason")
         self._update_if_changed("lbl_inara", "text", target_data.get("inara_link", "-"), "target_inara")
@@ -1193,7 +1788,7 @@ class Earth2View:
         dlg.title("Options")
         dlg.configure(bg=self.colors["BG_PANEL"])
         dlg.resizable(True, True)
-        dlg.minsize(620, 420)
+        dlg.minsize(620, 320)
         dlg.transient(self.root)
         dlg.grab_set()
         self._apply_icon_to_window(dlg)
@@ -1202,13 +1797,12 @@ class Earth2View:
         self.root.update_idletasks()
         x = self.root.winfo_rootx() + 80
         y = self.root.winfo_rooty() + 80
-        dlg.geometry(f"700x520+{x}+{y}")
 
         # --- Data folder (DB/logs) ---
         tk.Label(
             dlg,
             text="Data folder (DB + logs) RESTART REQUIRED",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=12, pady=(12, 4))
@@ -1252,7 +1846,7 @@ class Earth2View:
         tk.Label(
             dlg,
             text="Elite Journal folder (Saved Games/Frontier Developments/Elite Dangerous)",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=12, pady=(12, 4))
@@ -1295,7 +1889,7 @@ class Earth2View:
         tk.Label(
             dlg,
             text="Export folder (CSV + backups)",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=12, pady=(10, 4))
@@ -1338,7 +1932,7 @@ class Earth2View:
         tk.Label(
             dlg,
             text="Observer hotkey (e.g. Ctrl+Alt+O) RESTART REQUIRED",
-            font=("Consolas", 10, "bold"),
+            font=self.fonts["UI_SMALL_BOLD"],
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         ).pack(anchor="w", padx=12, pady=(12, 4))
@@ -1353,7 +1947,7 @@ class Earth2View:
             row_hot,
             textvariable=var_hot,
             width=28,
-            font=("Consolas", 10),
+            font=self.fonts["UI_SMALL"],
             bg=self.colors["BG_FIELD"],
             fg=self.colors["TEXT"],
             insertbackground=self.colors["TEXT"]
@@ -1425,13 +2019,44 @@ class Earth2View:
             command=on_ok
         ).pack(side="right")
 
+        # Size dialog to its content (avoid large empty bottom area)
+        dlg.update_idletasks()
+        req_w = max(620, dlg.winfo_reqwidth())
+        req_h = max(320, dlg.winfo_reqheight())
+        dlg.minsize(620, 320)
+        dlg.geometry(f"{req_w}x{req_h}+{x}+{y}")
+
+
         entry_data.focus_set()
         self.root.wait_window(dlg)
         if result["data_dir"] and result["export_dir"]:
-            # Preserve legacy return shape unless hotkey/callback was used
+            # Always include journal_dir in the return payload.
+            # Keep backward-compatible hotkey keys as well.
+            payload = {
+                "data_dir": result["data_dir"],
+                "export_dir": result["export_dir"],
+                "journal_dir": result.get("journal_dir", ""),
+            }
+            # Preserve legacy return shape unless hotkey/callback was used,
+            # but if hotkey was used include it as well.
             if on_save_cb or hotkey_value is not None:
-                return {"data_dir": result["data_dir"], "export_dir": result["export_dir"], "hotkey": result.get("hotkey")}
-            return {"data_dir": result["data_dir"], "export_dir": result["export_dir"]}
+                payload["hotkey"] = result.get("hotkey")
+                payload["hotkey_label"] = result.get("hotkey_label") or result.get("hotkey")
+            # Regression guard: ensure required keys are present in the return payload.
+            required_keys = {"data_dir", "export_dir", "journal_dir"}
+            missing = required_keys.difference(payload.keys())
+            if missing:
+                # In dev (running from source), fail fast. In frozen EXE, warn instead.
+                import sys
+                msg = f"Options payload missing keys: {sorted(missing)}"
+                if not getattr(sys, "frozen", False):
+                    raise RuntimeError(msg)
+                try:
+                    self.add_comms_message(f"[WARN] {msg}")
+                except Exception:
+                    pass
+
+            return payload
         return None
     def show_about_dialog(self, about_text: str, copy_text: str | None = None):
         """Show About dialog. If copy_text is provided, a 'Copy diagnostics' button is shown."""

@@ -31,14 +31,14 @@ jobs:
 
       - name: Build EXE (PyInstaller)
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed `
-            --name "DW3 Survey Logger" `
-            --icon "assets\earth2.ico" `
-            --add-data "assets;assets" `
-            --add-data "templates\Stellar Density Scan Worksheet.xlsx;templates" `
-            --collect-all pynput `
-            --hidden-import pynput `
-            --hidden-import pynput.keyboard `
+          pyinstaller --noconfirm --clean --onefile --windowed
+            --name "DW3 Survey Logger"
+            --icon "assets\earth2.ico"
+            --add-data "assets;assets"
+            --add-data "templates\Stellar Density Scan Worksheet.xlsx;templates"
+            --collect-all pynput
+            --hidden-import pynput
+            --hidden-import pynput.keyboard
             main.py
 
       - name: Package artifact

@@ -551,6 +551,22 @@ class Earth2Presenter:
             if not result:
                 return
 
+            # Regression guard: Options dialog must return journal_dir.
+            # If it ever disappears, warn loudly so we catch the bug immediately.
+            if isinstance(result, dict) and "journal_dir" not in result:
+                msg = ("[WARN] Options dialog result missing 'journal_dir'. "
+                       "Journal folder changes will not persist. "
+                       "Check view.show_options_dialog() return payload.")
+                try:
+                    self.model.add_comms_message(msg)
+                except Exception:
+                    pass
+                try:
+                    import logging
+                    logging.getLogger(__name__).warning(msg + f" result_keys={list(result.keys())}")
+                except Exception:
+                    pass
+
             data_dir = Path(result["data_dir"]).expanduser()
             export_dir = Path(result["export_dir"]).expanduser()
             journal_dir = Path(result.get("journal_dir") or current_journal or "").expanduser()
@@ -592,6 +608,15 @@ class Earth2Presenter:
             else:
                 self.model.add_comms_message(f"[SYSTEM] Data folder unchanged: {data_dir}")
 
+            # Journal folder feedback
+            try:
+                prev_journal = Path(str(current_journal or "")).expanduser() if str(current_journal or "").strip() else None
+            except Exception:
+                prev_journal = None
+            if str(journal_dir).strip() and (prev_journal is None or journal_dir != prev_journal):
+                self.model.add_comms_message(f"[SYSTEM] Journal folder set to: {journal_dir}")
+            else:
+                self.model.add_comms_message(f"[SYSTEM] Journal folder unchanged: {journal_dir}")
             self.model.add_comms_message(f"[SYSTEM] Export folder set to: {export_dir}")
 
             # Persist settings (portable, stored next to DB)
@@ -599,7 +624,7 @@ class Earth2Presenter:
             if settings_path:
                 settings_path = Path(settings_path)
                 settings_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"export_dir": str(export_dir), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
+                payload = {"export_dir": str(export_dir), "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
                 settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
             # Persist bootstrap settings (stable location so OUTDIR can be relocated)
