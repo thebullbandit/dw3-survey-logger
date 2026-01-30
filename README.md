@@ -1,154 +1,269 @@
-# DW3 Survey Logger (Earth2)
+# DW3 Survey Logger v0.9.8
 
-Logger for **Elite Dangerous** survey runs
-(DW3-style), built to run for long sessions and keep your data safe.
+## Project Status
 
-It watches your Elite Dangerous **journal files**, detects relevant
-events, scores "Earth-like" candidates, and stores everything in
-**crash-safe SQLite (WAL)**. Includes an **Observer overlay** for extra
-human notes and **drift guardrails** to help keep survey legs straight.
+**This is still under active development.**  
+It was created in **8 days** to support **DW3 expeditions**.
 
-> Current build shown in code: **v0.9.8**
+https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734/
 
-------------------------------------------------------------------------
+Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Features
+---
 
--   **Auto-detects Elite Dangerous journals**
-    -   Default journal path (Windows):
-        `Saved Games/Frontier Developments/Elite Dangerous`
--   **Crash-safe local storage**
-    -   SQLite with **WAL** for durability during long runs
--   **Candidate scoring & classification**
-    -   Built-in A/B/C style rating thresholds (temperature, gravity,
-        distance, etc.)
--   **Observer overlay (notes)**
-    -   Quick popup window to log extra context (flags, confidence,
-        sampling method, notes)
--   **Drift Guardrail helpers**
-    -   Math utilities for "leg guidance" to reduce sideways drift on
-        long survey lines
--   **Export to CSV (timestamped)**
-    -   Exports never overwrite old files (timestamped naming)
--   **Hotkey support**
-    -   Tries to register a **global hotkey** via `pynput`
-    -   Falls back to in-app hotkey if global registration isn't
-        available
+## Overview
 
-------------------------------------------------------------------------
+DW3 Survey Logger is for commanders participating in **DW3 (Deep Space Waypoint 3)**.  
+It helps collect, structure, validate and export survey data from *Elite Dangerous* in a consistent way.
 
-## Quick Start (Run from Source)
+The logger combines:
+- Automatic journal parsing from the game
+- Human observations entered during flight
+- Structured storage in a local SQLite database
 
-### Requirements
+The result is **clean, comparable data** that DW3 teams can use without manual cleanup.
 
--   Python 3.x (Windows recommended)
--   Tkinter (included with most Python Windows installs)
--   Optional:
-    -   `pynput` for global hotkeys
-    -   `pyyaml` if you use YAML config loader
-    -   `pywin32` for certain Windows focus helpers (if enabled/used)
+---
 
-### Run
+## Application Layout & Sections
 
-``` bash
+Below is an overview of the main sections of the application and how they work together.  
+Each section will soon have screenshots to help new users orient themselves.
+
+
+
+---
+
+### 1. Main Observation Screen
+
+![Main Observation Screen](`assets/main_observation_screen.png`)
+
+This is the primary workspace during flight.
+
+Here you:
+- See current system information
+- Monitor sampling progress
+- Enter observation values
+- Complete samples when finished
+
+
+---
+
+### 2. Session & Sample Tracking
+
+![Session Sample Tracking](`assets/session_sample_tracking.png`)
+
+Each expedition run is organized into:
+- **Sessions** (a continuous exploration period)
+- **Samples** (individual measurement sets)
+
+The logger automatically keeps track of:
+- Z-bins
+- Sample numbers
+- Completion state
+
+This ensures consistency across commanders and across time.
+
+---
+
+### 3. Journal Monitoring
+
+![Journal Monitor](`assets/journal_monitor.png`)
+
+The application continuously watches your **Elite Dangerous journal folder**.
+
+It:
+- Detects new journal entries in real time
+- Parses only relevant events
+- Ignores unrelated noise
+
+No data is uploaded or shared automatically. Everything remains local on your machine.
+
+---
+
+### 4. Drift Guardrail
+
+![Drift Guardrail](`assets/drift_guardrail.png`)
+
+Drift Guardrail helps detect unintended movement during measurements.
+
+It:
+- Tracks positional drift during sampling
+- Flags samples that may be compromised
+- Assists in deciding whether a re-sample is needed
+
+This improves scientific reliability without enforcing hard rules.
+
+---
+
+### 5. ELW Scans & Activity Tier (Informational)
+
+![Elw Activity Tier](`assets/elw_activity_tier.png`)
+
+When scanning **Earth-Like Worlds (ELWs)**, the application displays a small activity tier indicator.
+
+#### What the ELW Activity Tier Is
+
+- A **local, personal indicator** based on your own ELW scan activity
+- Designed purely for engagement and feedback
+
+
+#### What the ELW Activity Tier Is *Not*
+
+- Not a competition
+- Not a ranking between commanders
+- Not included in exported DW3 data
+
+The activity tier has **zero impact** on:
+- Data quality
+- Validation
+- DW3 worksheet exports
+- Scientific usefulness
+
+Two commanders with different ELW activity tiers can produce **equally valid data**.
+
+#### Why It Exists
+ 
+The ELW activity tier exists to add a light sense of progression **without turning science into competition**.
+
+If it ever becomes distracting or controversial, it may be:
+- Reworked
+- Made optional
+- Removed entirely
+
+Community feedback will guide that decision.
+
+---
+
+### 6. Data Storage (SQLite)
+
+Screenshot: `assets/database_overview.png`
+
+All collected data is stored locally in a **SQLite database**.
+
+Advantages:
+- Fast and reliable
+- Easy to back up
+- No external services required
+- Clear structure for later analysis
+
+Both raw and processed values are preserved.
+
+---
+
+### 7. Export to DW3 Worksheets
+
+Screenshot: `assets/excel_export.png`
+
+Completed samples can be exported to **DW3-compatible Excel worksheets**.
+
+Exports include:
+- Commander name
+- Session and sample identifiers
+- Measurement values
+- Required metadata for DW3 analysis
+
+Files are named clearly so coordinators can identify them without opening the file.
+
+---
+
+### 8. Options & Configuration
+
+Screenshot: `assets/options_screen.png`
+
+The options screen allows you to:
+- Select journal and output folders
+- Adjust hotkeys
+
+
+Most settings persist across restarts.
+
+---
+
+## Ranking, Scoring & Intent
+
+### This Is Not a Competitive Tool
+
+DW3 Survey Logger is **not designed to rank commanders against each other**.
+
+No commander is judged, compared or evaluated based on performance.
+
+### Summary
+
+- The app focuses on **data collection**
+- It is **not a leaderboard**
+- ELW activity tiers are local and purely for fun
+
+---
+
+## Installation
+
+### Windows (Recommended)
+1. Download the latest EXE from GitHub Releases
+2. Run the application
+3. Select your Elite Dangerous journal folder on first launch
+
+### Linux / Advanced Users
+```bash
+pip install -r requirements.txt
 python main.py
 ```
 
-------------------------------------------------------------------------
+---
 
-## Where Your Data Lives
+## Current Limitations
 
-By default the app writes to:
+- UI is "functional" but not final
+- Some validation is still evolving
 
-`%USERPROFILE%/Documents/DW3/Earth2/`
+These limitations are expected at this stage of development.
 
-Typical files: - `DW3_Earth2.db` (candidates database) -
-`DW3_Earth2_Observations.db` (observer notes database) -
-`DW3_Earth2_Logger.log` (app log) - `exports/` (timestamped CSV
-exports) - `settings.json` (optional settings overrides)
+---
 
-### Settings override (optional)
+## Roadmap
 
-If this file exists it can override export location: - `settings.json`
-supports: - `export_dir`: custom folder for exports
+### Next Focus
+- **Data validation**
+  - Prevent incomplete or invalid samples
+  - Stronger consistency checks before export
 
-Example:
+- **UI improvements**
+  - Clearer feedback
+  - Improved layout and readability
 
-``` json
-{
-  "export_dir": "D:/DW3/exports"
-}
-```
+### Future Ideas
+- Session summaries and statistics
+- Improved drift diagnostics
+- Guided workflows for new commanders
 
-------------------------------------------------------------------------
+---
 
-## Exports
+## Versioning Note
 
-The app can export candidates to CSV, using **timestamped filenames** to
-avoid overwriting previous runs.
+Recent releases focused primarily on internal stability and correctness.  
+Version numbering will stabilize once core behavior is fully locked in.
 
-Exports go to: - default: `Documents/DW3/Earth2/exports/` - or whatever
-you set as `export_dir` in `settings.json`
+---
 
-------------------------------------------------------------------------
+## Disclaimer
 
-## Hotkeys
+This project is **not officially affiliated with Frontier Developments or DW3 leadership**.  
+It is a community-built tool provided as-is.
 
-Default observer hotkey behavior: - Attempts global: **Ctrl + Alt +
-O** - Falls back to in-app: **Ctrl + O** (works when the app has focus)
+---
 
-If global hotkey registration fails, the app prints/logs a reason and
-continues safely.
+## Feedback & Contributions
 
-------------------------------------------------------------------------
+Bug reports and suggestions are welcome via GitHub Issues or Discord.  
+Please include logs and steps to reproduce where possible.
 
-## Architecture (For Devs)
 
-This project follows an MVP-ish split plus dedicated services:
+---
 
--   `model.py`\
-    Business logic (no UI), calculations, rules
--   `view.py`\
-    Tkinter UI components only
--   `presenter.py`\
-    Coordinates model + view, handles UI actions
--   `journal_monitor.py`\
-    Journal polling, file rotation, event parsing/routing
--   `earth2_database.py`\
-    SQLite persistence for candidates (WAL, schema, inserts)
--   `observer_overlay.py` / `observer_storage.py`\
-    Notes UI + persistence
--   `data_manager.py`\
-    Higher-level DB operations + export/import helpers
+## Acknowledgements
 
-The goal is: **stable long runs** + **diagnosable failures** (log
-instead of silently dying).
-
-------------------------------------------------------------------------
-
-## Troubleshooting
-
-**Nothing happens / no data logged** - Verify Elite Dangerous is writing
-journals - Check journal folder exists:
-`%USERPROFILE%/Saved Games/Frontier Developments/Elite Dangerous`
-
-**Global hotkey doesn't work** - Install optional dependency:
-`bash   pip install pynput` - Some environments restrict global hooks;
-app will fallback automatically.
-
-**Exports not showing up** - Check: `Documents/DW3/Earth2/exports/` - If
-using `settings.json`, confirm `export_dir` path exists or is writable.
-
-------------------------------------------------------------------------
-
-## Status
-
-This is a **beta** project intended for real expedition runs. Expect
-iteration, but the storage layer is designed to be durable and safe for
-long sessions.
-
-------------------------------------------------------------------------
-
-## License
-
-Add your chosen license here (MIT/Apache-2.0/etc).
+- CMDRs testing early builds 
+- The DW3 expedition community
+- Stellar Density Scan Worksheet created by CMDR Satsuma
+- Distant Radio 33.05
+- Frontier Development
