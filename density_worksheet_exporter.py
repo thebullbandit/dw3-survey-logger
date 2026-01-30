@@ -31,20 +31,25 @@ from pathlib import Path
 from typing import Iterable, Optional, Dict, Any, List
 
 import sys
-from pathlib import Path
 import openpyxl
 import re
 
-def resource_path(rel_path: str) -> Path:
+from pathlib import Path
+
+
+def resource_path(*parts: str) -> Path:
     """
-    Return absolute path to resource.
-    Works both when running from source and from a PyInstaller one-file EXE.
+    Returns an absolute Path to a bundled resource.
+    Works for: PyInstaller onefile + normal python runs.
     """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        base = Path(sys._MEIPASS)
+        base = Path(sys._MEIPASS)  # type: ignore[attr-defined]
     else:
         base = Path(__file__).resolve().parent
-    return base / rel_path
+    return base.joinpath(*parts)
+
+template_path = resource_path("templates", "Stellar Density Scan Worksheet.xlsx")
+
 
 
 
