@@ -14,11 +14,6 @@ Because development is ongoing and iterative, **bugs and rough edges should be e
 The following issues are **known and confirmed** in version **0.9.8**.  
 They do **not affect collected data integrity**, but may impact usability.
 
-- **Journal folder setting does not persist**  
-  Changing the journal folder in Options appears to save, but reverts to the default when reopening the Options window.
-
-- **Window resizing is not adaptive**  
-  When resizing the application window, UI elements do not dynamically adjust.
 
 - **Observation window is too large**  
   The observation panel can exceed practical screen space on smaller displays.
