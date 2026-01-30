@@ -16,7 +16,7 @@ Communicates with Presenter for all data operations.
 #   (none)
 #
 # Notes:
-#   - This file is part of the Logger Beta build.
+#   - This file is part of the DW3 Survery Logger Beta build.
 #   - Section dividers below are comments only.
 # ============================================================================
 
@@ -53,6 +53,7 @@ class Earth2View:
         # Event callbacks (set by presenter)
         self.on_export_csv: Optional[Callable] = None
         self.on_export_db: Optional[Callable] = None
+        self.on_export_density_xlsx: Optional[Callable] = None
         self.on_rescan: Optional[Callable] = None
         self.on_import_journals: Optional[Callable] = None
         self.on_options: Optional[Callable] = None
@@ -173,10 +174,6 @@ class Earth2View:
         led_frame = tk.Frame(header, bg=self.colors["BG_PANEL"])
         led_frame.pack(side="right", padx=20)
         
-        led_canvas = tk.Canvas(led_frame, width=20, height=20, bg=self.colors["BG_PANEL"], highlightthickness=0)
-        led_canvas.pack(side="left", padx=(0, 10))
-        led_dot = led_canvas.create_oval(4, 4, 16, 16, fill=self.colors["LED_IDLE"], outline="")
-
         # Quick-link: DW3 community radio (opens in default browser)
         lbl_radio = tk.Label(
             led_frame,
@@ -186,8 +183,12 @@ class Earth2View:
             bg=self.colors["BG_PANEL"],
             cursor="hand2"
         )
-        lbl_radio.pack(side="left", padx=(0, 12))
+        lbl_radio.pack(side="left", padx=(0, 10))
         lbl_radio.bind("<Button-1>", lambda _e: self._open_dw3_radio())
+
+        led_canvas = tk.Canvas(led_frame, width=20, height=20, bg=self.colors["BG_PANEL"], highlightthickness=0)
+        led_canvas.pack(side="left", padx=(0, 10))
+        led_dot = led_canvas.create_oval(4, 4, 16, 16, fill=self.colors["LED_IDLE"], outline="")
 
         # Small hover affordance
         lbl_radio.bind("<Enter>", lambda _e: lbl_radio.config(fg=self.colors.get("TEXT", self.colors["ORANGE"])))
@@ -624,6 +625,16 @@ class Earth2View:
         )
         btn_export_db.pack(side="left", padx=5)
 
+
+        btn_export_density = tk.Button(
+            control_frame,
+            text="Export Density XLSX",
+            font=("Consolas", 9),
+            bg=self.colors["BG_PANEL"],
+            fg=self.colors["TEXT"],
+            command=self._on_export_density_xlsx_clicked
+        )
+        btn_export_density.pack(side="left", padx=5)
         btn_rescan = tk.Button(
             control_frame,
             text="Rescan Current Journal",
@@ -1504,6 +1515,11 @@ class Earth2View:
         """Handle export DB button click"""
         if self.on_export_db:
             self.on_export_db()
+
+    def _on_export_density_xlsx_clicked(self):
+        """Handle export density worksheet XLSX button click"""
+        if self.on_export_density_xlsx:
+            self.on_export_density_xlsx()
     
     def _on_rescan_clicked(self):
         """Handle rescan button click"""

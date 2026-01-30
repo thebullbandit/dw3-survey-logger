@@ -65,7 +65,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.7",
+        "VERSION": "0.9.8",
         
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -202,6 +202,7 @@ def main():
     try:
         observer_storage = ObserverStorage(observer_db_path)
         print(f"[MAIN] Observer storage initialized: {observer_db_path}")
+        # NOTE: presenter is created later; observer_storage will be passed into presenter constructor.
     except Exception as e:
         print(f"[MAIN ERROR] Observer storage initialization failed: {e}")
         observer_storage = None
@@ -211,6 +212,8 @@ def main():
     # ========================================================================
     state_manager = JournalStateManager()
     print("[MAIN] Journal state manager initialized")
+    print("[SYSTEM] Auto-export on COMPLETE: disabled")
+
 
     # Create Tkinter root
     root = tk.Tk()
@@ -220,7 +223,17 @@ def main():
     # ========================================================================
     model = Earth2Model(db, config)
     view = Earth2View(root, config)
-    presenter = Earth2Presenter(model, view, config)
+    presenter = Earth2Presenter(model, view, config, observer_storage=observer_storage)
+    # Bind observer storage to model for exporter/guards
+    try:
+        model.observer_db = observer_storage
+    except Exception:
+        pass
+    # Ensure presenter has observer_storage even if constructed differently
+    try:
+        presenter.observer_storage = observer_storage
+    except Exception:
+        pass
 
     # Build UI
     view.build_ui()
@@ -251,34 +264,53 @@ def main():
         if observer_storage:
             try:
                 note_id = observer_storage.save(note)
+
                 if note.sample_index is not None:
                     presenter.add_comms_message(
                         f"[OBSERVER] Saved: {note.slice_status.value} | Sample #{note.sample_index} | System #{note.system_index}"
                     )
-                    
                 else:
-                    presenter.add_comms_message(f"[OBSERVER] Saved: {note.slice_status.value}")
+                    presenter.add_comms_message(
+                        f"[OBSERVER] Saved: {note.slice_status.value}"
+                    )
+
                 print(f"[MAIN] Observation saved with ID: {note_id}")
+
+
             except Exception as e:
-                presenter.add_comms_message(f"[OBSERVER ERROR] Failed to save: {e}")
-                print(f"[MAIN ERROR] Failed to save observation: {e}")
+                presenter.add_comms_message(f"[OBSERVER ERROR] Failed to save {e}")
         else:
             presenter.add_comms_message("[OBSERVER ERROR] Storage not available")
 
-    # Create overlay (initially hidden)
-    observer_overlay = ObserverOverlay(
-        parent=root,
-        config=config,
-        on_save=on_observation_saved,
-        session_id=journal_monitor.current_session_id or "",
-        app_version=config["VERSION"]
-    )
+
+    # Instantiate the ObserverOverlay now that presenter + journal monitor exist.
+    # (Some earlier patch versions forgot to create it, leaving observer_overlay = None.)
+    try:
+        observer_overlay = ObserverOverlay(
+            root,
+            config,
+            on_observation_saved,
+            session_id=(getattr(journal_monitor, "current_session_id", None) or ""),
+            app_version=str(config.get("VERSION") or "")
+        )
+    except Exception as e:
+        observer_overlay = None
+        try:
+            presenter.add_comms_message(f"[OBSERVER ERROR] Failed to initialize overlay: {e}")
+        except Exception:
+            pass
 
     def open_observer_overlay():
         """Open the observer overlay with current context"""
+        if observer_overlay is None:
+            presenter.add_comms_message("[OBSERVER ERROR] Overlay not available (initialization failed)")
+            return
         context = state_manager.get_context()
         # Update session_id in case it changed
-        observer_overlay.session_id = journal_monitor.current_session_id or ""
+        try:
+            observer_overlay.session_id = getattr(journal_monitor, "current_session_id", None) or ""
+        except Exception:
+            observer_overlay.session_id = ""
         observer_overlay.show(context)
         presenter.add_comms_message("[OBSERVER] Overlay opened")
 
@@ -342,16 +374,20 @@ def main():
             except Exception:
                 pass
 
+    hotkey_hint_text = ""
     if hk_status.ok:
-        observer_overlay.hotkey_hint = f"{GLOBAL_HOTKEY_LABEL} (global)"
+        hotkey_hint_text = f"{GLOBAL_HOTKEY_LABEL} (global)"
         presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {GLOBAL_HOTKEY_LABEL} (global)")
     else:
         _bind_fallback_hotkey()
-        observer_overlay.hotkey_hint = f"{GLOBAL_HOTKEY_LABEL} (in-app)"
+        hotkey_hint_text = f"{GLOBAL_HOTKEY_LABEL} (in-app)"
         presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {GLOBAL_HOTKEY_LABEL} (in-app)")
         # Keep the error quiet, but useful for debugging in console.
         if hk_status.error:
             print(f"[HOTKEY] Global hotkey unavailable, using fallback. Reason: {hk_status.error}")
+
+    if observer_overlay is not None:
+        observer_overlay.hotkey_hint = hotkey_hint_text
 
     # ========================================================================
     # OPTIONAL: AUTO-TRIGGER ON Z-BIN CHANGE
@@ -369,7 +405,7 @@ def main():
     presenter.add_comms_message("[SYSTEM] Application started")
     presenter.add_comms_message("[SYSTEM] MVP architecture active")
     presenter.add_comms_message("[SYSTEM] Journal monitor active")
-    presenter.add_comms_message(f"[SYSTEM] Observer system active ({observer_overlay.hotkey_hint})")
+    presenter.add_comms_message(f"[SYSTEM] Observer system active ({hotkey_hint_text or 'hotkey unavailable'})")
     presenter.add_comms_message("[SYSTEM] Scanning for journal files...")
     
     # Set initial status

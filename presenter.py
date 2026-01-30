@@ -22,7 +22,7 @@ from typing import Dict, Any
 class Earth2Presenter:
     """Presenter layer - coordinates between Model and View"""
     
-    def __init__(self, model, view, config: Dict[str, Any], journal_monitor=None):
+    def __init__(self, model, view, config: Dict[str, Any], journal_monitor=None, observer_storage=None):
         """
         Initialize the presenter
         
@@ -37,9 +37,12 @@ class Earth2Presenter:
         self.config = config
         self.journal_monitor = journal_monitor
         
+        self.observer_storage = observer_storage
+
         # Connect view callbacks to presenter methods
         self.view.on_export_csv = self.handle_export_csv
         self.view.on_export_db = self.handle_export_db
+        self.view.on_export_density_xlsx = self.handle_export_density_xlsx
         self.view.on_rescan = self.handle_rescan
         self.view.on_import_journals = self.handle_import_journals
         self.view.on_options = self.handle_options
@@ -376,6 +379,80 @@ class Earth2Presenter:
 
         except Exception as e:
             print(f"[PRESENTER ERROR] Export DB (outer): {e}")
+    def handle_export_density_xlsx(self):
+        """Handle DW3 density worksheet XLSX export request"""
+        try:
+            from pathlib import Path
+            from datetime import datetime
+            import threading
+
+            if not self.observer_storage:
+                self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
+                return
+
+            self.model.add_comms_message("[SYSTEM] Starting density worksheet export...")
+
+            def export_thread():
+                try:
+                    export_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.cwd())
+                    export_dir = Path(export_dir)
+
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_path = export_dir / f"DW3_Stellar_Density_Worksheet_{ts}.xlsx"
+
+                    # Template ships with the app under ./templates
+                    template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
+
+                    from density_worksheet_exporter import export_density_worksheet_from_notes
+
+                    notes = self.observer_storage.get_active()
+
+                    # CMDR name for filename (DW3 wants it visible without opening the sheet)
+                    cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
+
+                    # Optional metadata for filename: Z-bin + sample range
+                    z_bin = None
+                    sample_indexes = []
+
+                    for n in notes:
+                        # notes are ObserverNote objects, but be defensive in case dicts slip through
+                        zb = getattr(n, "z_bin", None) if not isinstance(n, dict) else n.get("z_bin")
+                        si = getattr(n, "sample_index", None) if not isinstance(n, dict) else n.get("sample_index")
+                        if z_bin is None and zb is not None:
+                            try:
+                                z_bin = int(zb)
+                            except Exception:
+                                z_bin = None
+                        if si is not None:
+                            try:
+                                sample_indexes.append(int(si))
+                            except Exception:
+                                pass
+
+                    sample_tag = ""
+                    if sample_indexes:
+                        s_min, s_max = min(sample_indexes), max(sample_indexes)
+                        sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
+
+                    final_path = export_density_worksheet_from_notes(
+                        notes,
+                        template_path,
+                        out_path,
+                        cmdr_name=cmdr,
+                        sample_tag=sample_tag,
+                        z_bin=z_bin,
+                    )
+
+                    self.model.add_comms_message(f"[SYSTEM] Density worksheet exported: {final_path}")
+                except Exception as e:
+                    self.model.add_comms_message(f"[ERROR] Density worksheet export failed: {e}")
+
+            threading.Thread(target=export_thread, daemon=True).start()
+
+        except Exception as e:
+            self.model.add_comms_message(f"[ERROR] Density worksheet export error: {e}")
+
+
 
 
     
