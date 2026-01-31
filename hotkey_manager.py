@@ -18,7 +18,7 @@ Design goals:
 #   hotkey_manager.py
 #
 # Connected modules (direct imports):
-#   (none)
+# 
 #
 # Notes:
 #   - This file is part of the Logger Beta build.
