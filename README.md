@@ -92,18 +92,17 @@ No data is uploaded or shared automatically. Everything remains local on your ma
 
 ---
 
-### 4. Drift Guardrail
+### 4. Next Z Target
 
-![Drift Guardrail](`assets/drift_guardrail.png`)
+The Observer Overlay shows your next Z-bin target while surveying.
 
-Drift Guardrail helps detect unintended movement during measurements.
+It displays:
+- **Current Z** — Your current Z coordinate
+- **Target Z** — The next Z-bin to aim for (last sample ± 50 ly)
+- **Remaining** — Distance to target (color-coded: green when close, orange when approaching)
+- **Direction** — Auto-detected (+Z or −Z) based on your last two samples
 
-It:
-- Tracks positional drift during sampling
-- Flags samples that may be compromised
-- Assists in deciding whether a re-sample is needed
-
-This improves scientific reliability without enforcing hard rules.
+Direction is set automatically after your second saved sample. No manual configuration needed.
 
 ---
 
@@ -244,7 +243,7 @@ These limitations are expected at this stage of development.
 
 ### Future Ideas
 - Session summaries and statistics
-- Improved drift diagnostics
+- Improved Z-target guidance
 - Guided workflows for new commanders
 
 ---
