@@ -22,29 +22,26 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           if (Test-Path requirements.txt) {
-            pip install -r requirements.txt
+            python -m pip install -r requirements.txt
           }
-          pip install pyinstaller
+          python -m pip install pyinstaller
 
-      - name: Build EXE (PyInstaller)
+      - name: Build EXE (PyInstaller spec)
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed
-            --name "DW3 Survey Logger"
-            --icon "assets\earth2.ico"
-            --add-data "assets;assets"
-            --add-data "templates\Stellar Density Scan Worksheet.xlsx;templates"
-            --collect-all pynput
-            --hidden-import pynput
-            --hidden-import pynput.keyboard
-            main.py
+          python -m PyInstaller --noconfirm --clean dw3_survey_logger.spec
 
       - name: Package artifact
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item "dist\DW3 Survey Logger.exe" "release\DW3 Survey Logger.exe"
+          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "No .exe found in dist/. PyInstaller build may have failed." }
+          Copy-Item $exe.FullName "release\$($exe.Name)" -Force
           Compress-Archive -Path "release\*" -DestinationPath "DW3_Survey_Logger_Windows.zip" -Force
 
       - name: Upload to GitHub Release

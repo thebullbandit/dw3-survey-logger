@@ -2,12 +2,14 @@
 # PyInstaller spec for DW3 Survey Logger
 #
 # Build with:
-#   pyinstaller dw3_survey_logger.spec
+#   py -m PyInstaller --noconfirm --clean dw3_survey_logger.spec
 
 import os
 
 block_cipher = None
-ROOT = os.path.abspath('.')
+
+# Always resolve paths relative to this spec file (CI-proof)
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 a = Analysis(
     ['main.py'],
@@ -17,19 +19,8 @@ a = Analysis(
         (os.path.join(ROOT, 'assets'), 'assets'),
         (os.path.join(ROOT, 'templates'), 'templates'),
     ],
+    # Keep hiddenimports minimal: only modules PyInstaller sometimes misses
     hiddenimports=[
-        'earth_similarity_score',
-        'density_worksheet_exporter',
-        'hotkey_manager',
-        'observer_models',
-        'observer_storage',
-        'observer_overlay',
-        'journal_state_manager',
-        'journal_monitor',
-        'import_journals',
-        'earth2_database',
-        'update_checker',
-        'window_focus',
         'pynput',
         'pynput.keyboard',
         'pynput.keyboard._win32',
