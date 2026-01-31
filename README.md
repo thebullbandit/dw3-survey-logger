@@ -88,17 +88,17 @@ No data is uploaded or shared automatically. Everything remains local on your ma
 
 ---
 
-### 4. Next Z Target
+### 4. Next Sample Location
 
-The Observer Overlay shows your next Z-bin target while surveying.
+The Observer Overlay shows your next sampling target while surveying.
 
 It displays:
 - **Current Z** - Your current Z coordinate
-- **Target Z** - The next Z-bin to aim for (last sample ± 50 ly)
-- **Remaining** - Distance to target (color-coded: green when close, orange when approaching)
-- **Direction** - Auto-detected (+Z or −Z) based on your last two samples
+- **Target Z-bin** - The next z-bin to aim for
+- **Distance** - Rounded distance in plain language (e.g. "Jump ~65 LY upward")
+- **Direction** - Arrows indicating upward or downward, auto-detected based on your last two samples
 
-Direction is set automatically after your second saved sample. No manual configuration needed.
+The overlay refreshes context automatically on every hotkey press, including after jumping to a new system. Direction is set automatically after your second saved sample. No manual configuration needed.
 
 ---
 
@@ -168,6 +168,12 @@ Exports include:
 - Session and sample identifiers
 - Measurement values
 - Required metadata for DW3 analysis
+
+Export options:
+- **Export All** - Exports CSV + Database + XLSX to a chosen folder via folder picker
+- **Individual Density XLSX export** - Now allows folder selection
+- Selected export folder is remembered between sessions
+- Clear success/failure indicators for each export
 
 Files are named clearly so coordinators can identify them without opening the file.
 
@@ -241,6 +247,18 @@ These limitations are expected at this stage of development.
 - Session summaries and statistics
 - Improved Z-target guidance
 - Guided workflows for new commanders
+
+---
+
+## Patch Notes
+
+### v0.9.12
+- Fixed: Observer overlay now refreshes context when hotkey pressed after jumping
+- Improved: Next Sample Location panel with clearer language and direction arrows
+- Added: Export All option with folder picker for CSV + DB + XLSX
+- Added: Folder selection for individual Density XLSX export
+- Changed: Display shows z-bin values and simplified distance indicators
+- Full backward compatibility with v0.9.9-0.9.10 data maintained
 
 ---
 
