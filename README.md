@@ -97,10 +97,10 @@ No data is uploaded or shared automatically. Everything remains local on your ma
 The Observer Overlay shows your next Z-bin target while surveying.
 
 It displays:
-- **Current Z** — Your current Z coordinate
-- **Target Z** — The next Z-bin to aim for (last sample ± 50 ly)
-- **Remaining** — Distance to target (color-coded: green when close, orange when approaching)
-- **Direction** — Auto-detected (+Z or −Z) based on your last two samples
+- **Current Z** - Your current Z coordinate
+- **Target Z** - The next Z-bin to aim for (last sample ± 50 ly)
+- **Remaining** - Distance to target (color-coded: green when close, orange when approaching)
+- **Direction** - Auto-detected (+Z or −Z) based on your last two samples
 
 Direction is set automatically after your second saved sample. No manual configuration needed.
 
