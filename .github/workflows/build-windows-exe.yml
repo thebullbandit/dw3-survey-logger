@@ -28,12 +28,16 @@ jobs:
           if (Test-Path requirements.txt) {
             python -m pip install -r requirements.txt
           }
-          python -m pip install pyinstaller
+          python -m pip install "pyinstaller>=6.0,<7"
 
       - name: Build EXE (PyInstaller spec)
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean dw3_survey_logger.spec
+          python -m PyInstaller --noconfirm --clean dw3_survey_logger.spec 2>&1 | Tee-Object -Variable buildLog
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::PyInstaller build failed. Full output above."
+            exit 1
+          }
 
       - name: Package artifact
         shell: pwsh
