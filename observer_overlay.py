@@ -245,8 +245,10 @@ class ObserverOverlay:
         """
         self._context = context
 
-        # If window exists and is open, just focus it
+        # If window exists and is open, update context and focus it
         if self.window is not None and self.window.winfo_exists():
+            # Update the context display (system name, z-bin, etc.)
+            self._populate_from_context()
             self.window.lift()
             self.window.focus_force()
             return
@@ -527,10 +529,10 @@ class ObserverOverlay:
         self._lbl_slice_lock.grid(row=4, column=1, columnspan=3, sticky="w", pady=2)
 
     def _build_z_target_section(self, parent: tk.Frame):
-        """Build Next Z Target section (replaces Drift Guardrail)."""
+        """Build Next Sample Location section (replaces Drift Guardrail)."""
         z_frame = tk.LabelFrame(
             parent,
-            text="NEXT Z TARGET",
+            text="NEXT SAMPLE LOCATION",
             font=("Consolas", 10, "bold"),
             fg=self.colors.ORANGE,
             bg=self.colors.BG_PANEL,
@@ -543,20 +545,20 @@ class ObserverOverlay:
         inner.pack(fill="x", padx=10, pady=8)
 
         fields = [
-            ("Current Z:", "_lbl_current_z"),
-            ("Target Z:", "_lbl_target_z"),
-            ("Remaining:", "_lbl_remaining_z"),
-            ("Direction:", "_lbl_z_direction"),
+            ("Current slice:", "_lbl_current_z"),
+            ("Next slice:", "_lbl_target_z"),
+            ("", "_lbl_jump_instruction"),  # Combined distance + direction on one line
         ]
 
         for idx, (label_text, attr_name) in enumerate(fields):
-            tk.Label(
-                inner,
-                text=label_text,
-                font=("Consolas", 9),
-                fg=self.colors.MUTED,
-                bg=self.colors.BG_PANEL,
-            ).grid(row=idx, column=0, sticky="e", padx=(0, 10), pady=2)
+            if label_text:  # Only create label if text provided
+                tk.Label(
+                    inner,
+                    text=label_text,
+                    font=("Consolas", 9),
+                    fg=self.colors.MUTED,
+                    bg=self.colors.BG_PANEL,
+                ).grid(row=idx, column=0, sticky="e", padx=(0, 10), pady=2)
 
             lbl = tk.Label(
                 inner,
@@ -565,7 +567,12 @@ class ObserverOverlay:
                 fg=self.colors.TEXT,
                 bg=self.colors.BG_PANEL,
             )
-            lbl.grid(row=idx, column=1, sticky="w", pady=2)
+            
+            # For the jump instruction, span both columns and center it
+            if attr_name == "_lbl_jump_instruction":
+                lbl.grid(row=idx, column=0, columnspan=2, sticky="", pady=(8, 2))
+            else:
+                lbl.grid(row=idx, column=1, sticky="w", pady=2)
             setattr(self, attr_name, lbl)
 
         self._z_target_frame = z_frame
@@ -1038,38 +1045,44 @@ class ObserverOverlay:
         if hasattr(self, "_lbl_hotkey") and self._lbl_hotkey is not None:
             self._lbl_hotkey.config(text=self.hotkey_hint or "-")
 
-        # Next Z Target
+        # Next Sample Location (simplified for users)
         try:
             current_z = self._context.star_pos[2]
             last_sample_z_bin = getattr(self._context, "last_sample_z_bin", None)
             z_direction = getattr(self._context, "z_direction", 1)
 
-            self._lbl_current_z.config(text=f"{current_z:,.1f} ly")
+            # Current slice - just show the z-bin value
+            current_slice = self._context.z_bin
+            self._lbl_current_z.config(text=f"{current_slice:,}")
 
+            # Calculate target slice
             if last_sample_z_bin is not None:
                 target_z = last_sample_z_bin + (50 * z_direction)
             else:
                 # No sample yet — use current z_bin + step
                 target_z = self._context.z_bin + (50 * z_direction)
 
-            self._lbl_target_z.config(text=f"{target_z:,} ly")
+            # Next slice with direction arrow
+            arrow = "↑" if z_direction >= 1 else "↓"
+            self._lbl_target_z.config(text=f"{target_z:,} {arrow}")
 
+            # Calculate remaining distance
             remaining = abs(target_z - current_z)
-            self._lbl_remaining_z.config(text=f"{remaining:,.1f} ly")
-
-            # Color coding for remaining
+            
+            # Create jump instruction
+            direction_word = "upward" if z_direction >= 1 else "downward"
+            jump_text = f"Jump ~{int(remaining)} LY {direction_word}"
+            
+            # Color coding based on remaining distance
             if remaining <= 10:
                 color = self.colors.GREEN
-            elif remaining <= 20:
+            elif remaining <= 25:
                 color = self.colors.ORANGE
             else:
                 color = self.colors.TEXT
-            self._lbl_remaining_z.config(fg=color)
-
-            dir_text = "+Z" if z_direction >= 1 else "-Z"
-            if last_sample_z_bin is None:
-                dir_text += "  (save first sample to set direction)"
-            self._lbl_z_direction.config(text=dir_text)
+            
+            self._lbl_jump_instruction.config(text=jump_text, fg=color)
+            
         except Exception:
             pass
 

@@ -55,6 +55,7 @@ class Earth2View:
         self.on_export_csv: Optional[Callable] = None
         self.on_export_db: Optional[Callable] = None
         self.on_export_density_xlsx: Optional[Callable] = None
+        self.on_export_all: Optional[Callable] = None
         self.on_rescan: Optional[Callable] = None
         self.on_import_journals: Optional[Callable] = None
         self.on_options: Optional[Callable] = None
@@ -1200,9 +1201,10 @@ class Earth2View:
             activebackground=self.colors["ORANGE"],
             activeforeground="#000000"
         )
+        export_menu.add_command(label="Export All (Choose Folder)...", command=self._on_export_all_clicked)
+        export_menu.add_separator()
         export_menu.add_command(label="CSV", command=self._on_export_csv_clicked)
         export_menu.add_command(label="Database", command=self._on_export_db_clicked)
-        export_menu.add_separator()
         export_menu.add_command(label="Density XLSX", command=self._on_export_density_xlsx_clicked)
 
         export_btn.config(menu=export_menu)
@@ -2127,6 +2129,11 @@ class Earth2View:
         """Handle export density worksheet XLSX button click"""
         if self.on_export_density_xlsx:
             self.on_export_density_xlsx()
+    
+    def _on_export_all_clicked(self):
+        """Handle export all button click"""
+        if self.on_export_all:
+            self.on_export_all()
     
     def _on_rescan_clicked(self):
         """Handle rescan button click"""

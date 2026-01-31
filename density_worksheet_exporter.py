@@ -153,7 +153,10 @@ def export_density_worksheet_from_notes(
 
         ws.cell(r, 5).value = d.get("max_distance")             # E Max Distance
 
-        # StarPos mapping: logger stores (x, y, z) but worksheet expects X, Z, Y
+        # StarPos mapping: Journal provides (x, y, z) where z is vertical (galactic height).
+        # Worksheet columns are: X (horizontal), Z (vertical), Y (horizontal).
+        # This is a DIRECT mapping: journal_x→X, journal_z→Z, journal_y→Y
+        # Both journal and worksheet use Z as the vertical axis.
         sp = d.get("star_pos") or (None, None, None)
         try:
             x, y, z = sp
@@ -161,8 +164,8 @@ def export_density_worksheet_from_notes(
             x = y = z = None
 
         ws.cell(r, 7).value = x                                 # G X
-        ws.cell(r, 8).value = z                                 # H Z
-        ws.cell(r, 9).value = y                                 # I Y
+        ws.cell(r, 8).value = z                                 # H Z (vertical - from journal's Z which is vertical)
+        ws.cell(r, 9).value = y                                 # I Y (horizontal - from journal's Y)
 
     # --------------------------------------------------------------------
     # Output filename normalization (DW3-friendly)

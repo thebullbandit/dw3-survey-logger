@@ -43,6 +43,7 @@ class Earth2Presenter:
         self.view.on_export_csv = self.handle_export_csv
         self.view.on_export_db = self.handle_export_db
         self.view.on_export_density_xlsx = self.handle_export_density_xlsx
+        self.view.on_export_all = self.handle_export_all
         self.view.on_rescan = self.handle_rescan
         self.view.on_import_journals = self.handle_import_journals
         self.view.on_options = self.handle_options
@@ -365,24 +366,166 @@ class Earth2Presenter:
 
         except Exception as e:
             print(f"[PRESENTER ERROR] Export DB (outer): {e}")
-    def handle_export_density_xlsx(self):
-        """Handle DW3 density worksheet XLSX export request"""
+    
+    def handle_export_all(self):
+        """Handle export all formats (CSV + DB + XLSX) with folder picker"""
         try:
             from pathlib import Path
             from datetime import datetime
             import threading
+            import shutil
+            from tkinter import filedialog
+            
+            # Ask user to select export folder
+            initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
+            export_dir = filedialog.askdirectory(
+                title="Select Export Folder",
+                initialdir=initial_dir,
+                parent=self.view.root
+            )
+            
+            if not export_dir:
+                # User cancelled
+                return
+            
+            export_dir = Path(export_dir)
+            
+            # Save this directory for next time
+            self.config["EXPORT_DIR"] = str(export_dir)
+            
+            self.model.add_comms_message(f"[SYSTEM] Exporting all formats to: {export_dir}")
+            
+            def export_thread():
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                export_count = 0
+                
+                # 1. Export CSV
+                try:
+                    csv_path = export_dir / f"DW3_Earth2_Candidates_{timestamp}.csv"
+                    self.model.db.export_to_csv(csv_path)
+                    self.model.add_comms_message(f"[✓] CSV exported: {csv_path.name}")
+                    export_count += 1
+                except Exception as e:
+                    self.model.add_comms_message(f"[✗] CSV export failed: {e}")
+                
+                # 2. Export Database Backup
+                try:
+                    db_path_str = self.config.get("DB_PATH", "")
+                    if db_path_str:
+                        db_path = Path(db_path_str)
+                        if db_path.exists():
+                            backup_path = export_dir / f"{db_path.stem}_backup_{timestamp}{db_path.suffix}"
+                            shutil.copy2(db_path, backup_path)
+                            size_mb = backup_path.stat().st_size / (1024 * 1024)
+                            self.model.add_comms_message(f"[✓] Database backup exported: {backup_path.name} ({size_mb:.2f} MB)")
+                            export_count += 1
+                        else:
+                            self.model.add_comms_message("[✗] Database file not found")
+                    else:
+                        self.model.add_comms_message("[✗] Database path not configured")
+                except Exception as e:
+                    self.model.add_comms_message(f"[✗] Database backup failed: {e}")
+                
+                # 3. Export Density XLSX
+                try:
+                    if not self.observer_storage:
+                        self.model.add_comms_message("[✗] Observer storage not available (XLSX skipped)")
+                    else:
+                        template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
+                        out_path = export_dir / f"DW3_Stellar_Density_Worksheet_{timestamp}.xlsx"
+                        
+                        from density_worksheet_exporter import export_density_worksheet_from_notes
+                        
+                        notes = self.observer_storage.get_active()
+                        
+                        if not notes:
+                            self.model.add_comms_message("[✗] No observer notes to export (XLSX skipped)")
+                        else:
+                            # Get CMDR name and metadata
+                            cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
+                            
+                            z_bin = None
+                            sample_indexes = []
+                            
+                            for n in notes:
+                                zb = getattr(n, "z_bin", None) if not isinstance(n, dict) else n.get("z_bin")
+                                si = getattr(n, "sample_index", None) if not isinstance(n, dict) else n.get("sample_index")
+                                if z_bin is None and zb is not None:
+                                    try:
+                                        z_bin = int(zb)
+                                    except Exception:
+                                        pass
+                                if si is not None:
+                                    try:
+                                        sample_indexes.append(int(si))
+                                    except Exception:
+                                        pass
+                            
+                            sample_tag = ""
+                            if sample_indexes:
+                                s_min, s_max = min(sample_indexes), max(sample_indexes)
+                                sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
+                            
+                            final_path = export_density_worksheet_from_notes(
+                                notes,
+                                template_path,
+                                out_path,
+                                cmdr_name=cmdr,
+                                sample_tag=sample_tag,
+                                z_bin=z_bin,
+                            )
+                            
+                            self.model.add_comms_message(f"[✓] Density XLSX exported: {final_path.name}")
+                            export_count += 1
+                except Exception as e:
+                    self.model.add_comms_message(f"[✗] Density XLSX export failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                
+                # Summary
+                self.model.add_comms_message(f"[SYSTEM] Export complete: {export_count}/3 files exported to {export_dir}")
+            
+            # Run in background thread
+            threading.Thread(target=export_thread, daemon=True).start()
+            
+        except Exception as e:
+            self.model.add_comms_message(f"[ERROR] Export all failed: {e}")
+            print(f"[PRESENTER ERROR] Export all: {e}")
+            import traceback
+            traceback.print_exc()
+    def handle_export_density_xlsx(self):
+        """Handle DW3 density worksheet XLSX export request with folder picker"""
+        try:
+            from pathlib import Path
+            from datetime import datetime
+            import threading
+            from tkinter import filedialog
 
             if not self.observer_storage:
                 self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
                 return
 
+            # Ask user to select export folder
+            initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
+            export_dir = filedialog.askdirectory(
+                title="Select Export Folder for Density Worksheet",
+                initialdir=initial_dir,
+                parent=self.view.root
+            )
+            
+            if not export_dir:
+                # User cancelled
+                return
+            
+            export_dir = Path(export_dir)
+            
+            # Save this directory for next time
+            self.config["EXPORT_DIR"] = str(export_dir)
+
             self.model.add_comms_message("[SYSTEM] Starting density worksheet export...")
 
             def export_thread():
                 try:
-                    export_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.cwd())
-                    export_dir = Path(export_dir)
-
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     out_path = export_dir / f"DW3_Stellar_Density_Worksheet_{ts}.xlsx"
 

@@ -1,4 +1,4 @@
-# DW3 Survey Logger v0.9.10
+# DW3 Survey Logger v0.9.12
 
 ## Project Status
 
@@ -9,16 +9,12 @@ https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Known Issues (v0.9.10)
+## Known Issues (v0.9.12)
 
-The following issues are **known and confirmed** in version **0.9.9**.  
+The following issues are **known and confirmed** in version **0.9.12**.  
 They do **not affect collected data integrity**, but may impact usability.
 
-
-- **Excel export folder cannot be changed**  
-  The export location is currently fixed and ignores user selection.
-
-  These issues will be addressed as part of upcoming updates.
+None
 
 ---
 
