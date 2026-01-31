@@ -4,18 +4,11 @@
 # Build with:
 #   python -m PyInstaller --noconfirm --clean dw3_survey_logger.spec
 
-import os
-
-# __file__ is set by PyInstaller to the absolute path of this spec file
-ROOT = os.path.dirname(os.path.abspath(SPECPATH))
-
 a = Analysis(
-    [os.path.join(ROOT, 'main.py')],
-    pathex=[ROOT],
-    binaries=[],
+    ['main.py'],
     datas=[
-        (os.path.join(ROOT, 'assets'), 'assets'),
-        (os.path.join(ROOT, 'templates'), 'templates'),
+        ('assets', 'assets'),
+        ('templates', 'templates'),
     ],
     hiddenimports=[
         'pynput',
@@ -24,7 +17,6 @@ a = Analysis(
         'openpyxl',
     ],
     hookspath=[],
-    hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
@@ -44,5 +36,5 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon=os.path.join(ROOT, 'assets', 'earth2.ico'),
+    icon='assets/earth2.ico',
 )
