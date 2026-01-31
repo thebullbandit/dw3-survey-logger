@@ -1,4 +1,4 @@
-# DW3 Survey Logger v0.9.9
+# DW3 Survey Logger v0.9.10
 
 ## Project Status
 
@@ -9,14 +9,11 @@ https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Known Issues (v0.9.9)
+## Known Issues (v0.9.10)
 
 The following issues are **known and confirmed** in version **0.9.9**.  
 They do **not affect collected data integrity**, but may impact usability.
 
-
-- **Observation window is too large**  
-  The observation panel can exceed practical screen space on smaller displays.
 
 - **Excel export folder cannot be changed**  
   The export location is currently fixed and ignores user selection.

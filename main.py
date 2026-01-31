@@ -31,10 +31,9 @@ def get_config() -> dict:
     """
     Get application configuration.
 
-    Loads bootstrap settings from a stable location so the user can relocate OUTDIR.
-    Portable settings (next to the DB) can override export_dir and hotkey_label,
-    but journal_dir is intentionally taken from bootstrap to avoid "revert" surprises
-    when OUTDIR points at an older folder containing a stale settings.json.
+    All user settings are stored in a single file at a stable location
+    (~/.dw3_survey_logger/settings.json) so the user can relocate OUTDIR
+    without losing preferences.
     """
     import os
     import json
@@ -84,7 +83,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.9",
+        "VERSION": "0.9.10",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -93,7 +92,6 @@ def get_config() -> dict:
         "JOURNAL_DIR": JOURNAL_DIR,
         "OUTDIR": OUTDIR,
         "EXPORT_DIR": OUTDIR / "exports",
-        "SETTINGS_PATH": OUTDIR / "settings.json",
         "BOOTSTRAP_SETTINGS_PATH": BOOTSTRAP_SETTINGS_PATH,
         "DB_PATH": OUTDIR / "DW3_Earth2.db",
         "OUTCSV": OUTDIR / "exports",
@@ -146,32 +144,14 @@ def get_config() -> dict:
         "LED_IDLE": "#888888",
     }
 
-    # Portable settings next to the DB:
-    # allow export_dir + hotkey_label overrides, but NOT journal_dir.
-    try:
-        settings_path = config.get("SETTINGS_PATH")
-        if settings_path and Path(settings_path).exists():
-            data = json.loads(Path(settings_path).read_text(encoding="utf-8"))
-
-            export_dir = data.get("export_dir")
-            if export_dir:
-                exp = Path(os.path.expandvars(str(export_dir))).expanduser()
-                config["EXPORT_DIR"] = exp
-                config["OUTCSV"] = exp
-
-            hotkey_label = data.get("hotkey_label")
-            if hotkey_label:
-                config["HOTKEY_LABEL"] = str(hotkey_label)
-
-            # Intentionally ignore portable journal_dir to prevent "revert" surprises.
-
-        elif bootstrap_export_dir:
+    # Apply bootstrap export_dir override
+    if bootstrap_export_dir:
+        try:
             exp = Path(os.path.expandvars(str(bootstrap_export_dir))).expanduser()
             config["EXPORT_DIR"] = exp
             config["OUTCSV"] = exp
-
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return config
 
@@ -258,10 +238,30 @@ def main():
         pass
 
     # Build UI
-    view.build_ui()
+    try:
+        view.build_ui()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("Startup Error", f"Failed to build UI:\n\n{e}\n\nPlease report this on GitHub.")
+        except Exception:
+            pass
+        return
 
     # Start presenter (begins UI refresh loop)
-    presenter.start()
+    try:
+        presenter.start()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("Startup Error", f"Failed to start presenter:\n\n{e}\n\nPlease report this on GitHub.")
+        except Exception:
+            pass
+        return
 
     # ========================================================================
     # CREATE JOURNAL MONITOR (Step 2) - Now with state_manager
@@ -286,6 +286,12 @@ def main():
         if observer_storage:
             try:
                 note_id = observer_storage.save(note)
+
+                # Update Z-target tracking
+                try:
+                    state_manager.set_last_sample_z_bin(note.z_bin)
+                except Exception:
+                    pass
 
                 if note.sample_index is not None:
                     presenter.add_comms_message(

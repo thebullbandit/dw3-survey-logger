@@ -129,32 +129,17 @@ def export_density_worksheet_from_notes(
 
     rows.sort(key=sort_key)
 
-    # Build an index of existing template rows by Z Sample (col B).
-    z_to_rows: Dict[int, List[int]] = {}
-    for r in range(6, min(ws.max_row, 2000) + 1):
-        b = ws.cell(r, 2).value
-        try:
-            zb = int(b) if b is not None and str(b).strip() != "" else None
-        except Exception:
-            zb = None
-        if zb is not None:
-            z_to_rows.setdefault(zb, []).append(r)
+    if not rows:
+        raise ValueError("No completed samples to export. Save at least one observation with density data before exporting.")
 
-    def find_row_for_z(zb: int) -> int:
-        # Prefer existing row with matching Z Sample and empty System cell (A)
-        for r in z_to_rows.get(zb, []):
-            a = ws.cell(r, 1).value
-            if not (str(a).strip() if a is not None else ""):
-                return r
-        # Otherwise append at bottom (avoid insert_rows which may break formulas)
-        return ws.max_row + 1
-
-    for d in rows:
+    # Write rows sequentially starting at row 6 (after headers)
+    START_ROW = 6
+    for i, d in enumerate(rows):
         try:
             zb = int(d.get("z_bin") or 0)
         except Exception:
             zb = 0
-        r = find_row_for_z(zb)
+        r = START_ROW + i
 
         ws.cell(r, 1).value = d.get("system_name") or ""      # A System
         ws.cell(r, 2).value = zb                               # B Z Sample
@@ -181,12 +166,8 @@ def export_density_worksheet_from_notes(
 
     # --------------------------------------------------------------------
     # Output filename normalization (DW3-friendly)
-    # - Callers sometimes pass a full file path like:
-    #     DW3_Stellar_Density_Worksheet_YYYYMMDD_HHMMSS.xlsx
-    # - DW3 wants CMDR in the filename. We rewrite the name while keeping the
-    #   same directory and timestamp.
     # --------------------------------------------------------------------
-        safe_cmdr = re.sub(r"[^A-Za-z0-9_-]", "_", (_cmdr or "UnknownCMDR"))
+    safe_cmdr = re.sub(r"[^A-Za-z0-9_-]", "_", (_cmdr or "UnknownCMDR"))
     safe_sample = re.sub(r"[^A-Za-z0-9_-]", "_", (sample_tag or "")).strip("_")
     z_part = f"_Z{int(z_bin)}" if z_bin is not None else ""
     sample_part = f"_{safe_sample}" if safe_sample else ""

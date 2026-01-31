@@ -30,9 +30,6 @@ if TYPE_CHECKING:
 
 from observer_models import generate_event_id
 
-# Drift guardrail helpers
-from drift_guardrail import parse_navroute_positions, drift_metrics
-
 
 # ============================================================================
 # JOURNAL FILE READER
@@ -378,12 +375,6 @@ class JournalMonitor:
         self.poll_fast = config.get("POLL_SECONDS_FAST", 0.1)
         self.poll_slow = config.get("POLL_SECONDS_SLOW", 0.25)
 
-        # NavRoute.json (for Drift Guardrail)
-        self._navroute_path = self.journal_dir / "NavRoute.json"
-        self._navroute_mtime = 0.0
-        self._navroute_cache: list[tuple[str, tuple[float, float, float]]] = []
-        self._last_drift_poll = 0.0
-        self._drift_poll_interval = float(config.get("DRIFT_POLL_SECONDS", 0.5))
     
     def _setup_event_handlers(self):
         """Setup event processor callbacks"""
@@ -679,11 +670,6 @@ class JournalMonitor:
         self.journal_dir = journal_dir
         self.file_reader.journal_dir = journal_dir
 
-        # NavRoute.json (drift guardrail)
-        self._navroute_path = self.journal_dir / "NavRoute.json"
-        self._navroute_mtime = 0.0
-        self._navroute_cache = []
-
         # Force file reopen on next loop
         try:
             self.file_reader.close()
@@ -719,12 +705,6 @@ class JournalMonitor:
                     last_journal_check = time.time()
                     self._check_journal_rotation()
 
-                # Drift guardrail update (NavRoute.json polling)
-                now = time.time()
-                if now - self._last_drift_poll >= self._drift_poll_interval:
-                    self._last_drift_poll = now
-                    self._poll_navroute_and_update_drift()
-                
                 # Check if file was rotated/deleted
                 if self.file_reader.is_rotated():
                     self._reopen_current_file()
@@ -827,113 +807,6 @@ class JournalMonitor:
             self.presenter.add_comms_message("[JOURNAL] Reopening file after rotation")
             self.file_reader.open_file(self.file_reader.current_file, from_start=False)
 
-    # ====================================================================
-    # DRIFT GUARDRAIL (NavRoute.json)
-    # ====================================================================
-
-    def _poll_navroute_and_update_drift(self):
-        """Poll NavRoute.json and update drift guardrail candidates in the model.
-
-        This is intentionally lightweight and safe to fail silently.
-        """
-        try:
-            # If we don't have a state manager, we can't define P0/u safely
-            if not self.state_manager:
-                return
-
-            # No file? Clear drift UI once
-            if not self._navroute_path.exists():
-                if self.model.get_status("drift_status") != "No NavRoute":
-                    self.model.update_status({
-                        "drift_status": "No NavRoute",
-                        "drift_candidates": [],
-                        "drift_meta": {"axis": "StarPos[2] (Z)", "step_ly": 50},
-                    })
-                    # Also store for observation overlay
-                    self.state_manager.set_drift_snapshot(
-                        "No NavRoute",
-                        [],
-                        {"axis": "StarPos[2] (Z)", "step_ly": 50},
-                    )
-                return
-
-            # Refresh cache when file changes
-            mtime = self._navroute_path.stat().st_mtime
-            if mtime != self._navroute_mtime:
-                self._navroute_mtime = mtime
-                with self._navroute_path.open("r", encoding="utf-8", errors="ignore") as f:
-                    data = json.load(f)
-                self._navroute_cache = parse_navroute_positions(data)
-
-            if not self._navroute_cache:
-                self.model.update_status({
-                    "drift_status": "NavRoute empty",
-                    "drift_candidates": [],
-                    "drift_meta": {"axis": "StarPos[2] (Z)", "step_ly": 50},
-                })
-                self.state_manager.set_drift_snapshot(
-                    "NavRoute empty",
-                    [],
-                    {"axis": "StarPos[2] (Z)", "step_ly": 50},
-                )
-                return
-
-            # Update leg direction from a few route points (unless locked)
-            route_positions = [pos for _, pos in self._navroute_cache]
-            self.state_manager.update_leg_from_navroute(route_positions, smooth_n=int(self.config.get("DRIFT_SMOOTH_N", 3)))
-
-            # Get leg state + compute metrics for a few upcoming hops
-            leg_state = self.state_manager.get_leg_state()
-            P0 = leg_state.get("leg_start_pos")
-            u = leg_state.get("leg_dir_unit")
-            step_ly = float(leg_state.get("leg_step_ly") or 50.0)
-
-            if P0 is None or u == (0.0, 0.0, 0.0):
-                # Initialize start if needed; direction will fill in once we have a usable route
-                self.state_manager.ensure_leg_initialized()
-                self.model.update_status({
-                    "drift_status": "Leg not initialized",
-                    "drift_candidates": [],
-                    "drift_meta": {"axis": "StarPos[2] (Z)", "step_ly": step_ly},
-                })
-                self.state_manager.set_drift_snapshot(
-                    "Leg not initialized",
-                    [],
-                    {"axis": "StarPos[2] (Z)", "step_ly": step_ly},
-                )
-                return
-
-            max_candidates = int(self.config.get("DRIFT_MAX_CANDIDATES", 5))
-            candidates: list[dict[str, object]] = []
-            for name, pos in self._navroute_cache[:max_candidates]:
-                m = drift_metrics(P0, u, step_ly, pos, system_name=name)
-                candidates.append(m.to_dict())
-
-            # Update model status for UI
-            self.model.update_status({
-                "drift_status": "Active",
-                "drift_candidates": candidates,
-                "drift_meta": {
-                    "axis": "StarPos[2] (Z)",
-                    "step_ly": step_ly,
-                    "locked": bool(leg_state.get("leg_locked")),
-                },
-            })
-
-            self.state_manager.set_drift_snapshot(
-                "Active",
-                candidates,
-                {
-                    "axis": "StarPos[2] (Z)",
-                    "step_ly": step_ly,
-                    "locked": bool(leg_state.get("leg_locked")),
-                },
-            )
-
-        except Exception:
-            # Keep journal loop stable no matter what.
-            return
-    
     def _perform_rescan(self):
         """Perform full rescan of all journal files"""
         self.presenter.update_scan_status("RESCANNING")

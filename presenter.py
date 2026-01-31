@@ -123,9 +123,6 @@ class Earth2Presenter:
             # Update target lock
             self._update_target_lock(status)
 
-            # Update drift guardrail (if available)
-            self._update_drift_guardrail(status)
-            
             # Update statistics
             self._update_statistics(stats, status)
             
@@ -268,17 +265,6 @@ class Earth2Presenter:
         
         self.view.update_statistics(stats_data)
 
-    def _update_drift_guardrail(self, status: Dict[str, Any]):
-        """Update Drift Guardrail section (NavRoute guidance)."""
-        try:
-            drift_status = status.get("drift_status", "-")
-            candidates = status.get("drift_candidates", []) or []
-            meta = status.get("drift_meta", {}) or {}
-            if hasattr(self.view, "update_drift_guardrail"):
-                self.view.update_drift_guardrail(drift_status, candidates, meta)
-        except Exception as e:
-            print(f"[PRESENTER ERROR] Drift guardrail: {e}")
-    
     # ========================================================================
     # EVENT HANDLERS - Called from View
     # ========================================================================
@@ -599,7 +585,6 @@ class Earth2Presenter:
             # NOTE: the database + observer storage are already open, so relocation requires restart.
             if data_dir != old_data_dir:
                 self.config["OUTDIR"] = data_dir
-                self.config["SETTINGS_PATH"] = data_dir / "settings.json"
                 self.config["DB_PATH"] = data_dir / "DW3_Earth2.db"
                 self.config["LOGFILE"] = data_dir / "DW3_Earth2_Logger.log"
 
@@ -619,21 +604,25 @@ class Earth2Presenter:
                 self.model.add_comms_message(f"[SYSTEM] Journal folder unchanged: {journal_dir}")
             self.model.add_comms_message(f"[SYSTEM] Export folder set to: {export_dir}")
 
-            # Persist settings (portable, stored next to DB)
-            settings_path = self.config.get("SETTINGS_PATH")
-            if settings_path:
-                settings_path = Path(settings_path)
-                settings_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"export_dir": str(export_dir), "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
-                settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-            # Persist bootstrap settings (stable location so OUTDIR can be relocated)
+            # Persist settings (single file at stable location)
             bootstrap_path = self.config.get("BOOTSTRAP_SETTINGS_PATH")
             if bootstrap_path:
                 bootstrap_path = Path(bootstrap_path)
                 bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {"data_dir": str(data_dir), "export_dir": str(export_dir), "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""), "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")}
-                bootstrap_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                # Read-merge-write to preserve update checker fields
+                existing = {}
+                try:
+                    if bootstrap_path.exists():
+                        existing = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+                except Exception:
+                    existing = {}
+                existing.update({
+                    "data_dir": str(data_dir),
+                    "export_dir": str(export_dir),
+                    "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""),
+                    "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O"),
+                })
+                bootstrap_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
         except Exception as e:
             self.model.add_comms_message(f"[ERROR] Failed to save options: {e}")
@@ -649,7 +638,7 @@ class Earth2Presenter:
             outdir = self.config.get("OUTDIR", "")
             export_dir = self.config.get("EXPORT_DIR", "")
             journal_dir = self.config.get("JOURNAL_DIR", "")
-            settings_path = self.config.get("SETTINGS_PATH", "")
+            settings_path = self.config.get("BOOTSTRAP_SETTINGS_PATH", "")
 
             def _size(p: str) -> str:
                 try:

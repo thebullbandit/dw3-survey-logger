@@ -75,10 +75,6 @@ class Earth2Model:
             "last_goldilocks_score": -1,
             "last_goldilocks_breakdown": {},
             "last_log_time": 0,
-            # Drift guardrail
-            "drift_status": "No NavRoute",
-            "drift_candidates": [],
-            "drift_meta": {"axis": "StarPos[2] (Z)", "step_ly": 50},
             "comms": deque(maxlen=self.config.get("COMMS_MAX_LINES", 150))
         }
         
@@ -412,7 +408,10 @@ class Earth2Model:
             })
             # Reset session ratings
             with self._status_lock:
-                self._session_ratings = {"A": 0, "B": 0, "C": 0}
+                self._session_ratings = {
+                    "Earth Twin": 0, "Excellent": 0, "Very Good": 0,
+                    "Good": 0, "Fair": 0, "Marginal": 0, "Poor": 0, "Unknown": 0,
+                }
             
             return session_id
         except Exception as e:
@@ -485,4 +484,7 @@ class Earth2Model:
             "session_start": time.time(),
         })
         with self._status_lock:
-            self._session_ratings = {"A": 0, "B": 0, "C": 0}
+            self._session_ratings = {
+                    "Earth Twin": 0, "Excellent": 0, "Very Good": 0,
+                    "Good": 0, "Fair": 0, "Marginal": 0, "Poor": 0, "Unknown": 0,
+                }

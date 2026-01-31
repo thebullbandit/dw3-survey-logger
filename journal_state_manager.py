@@ -26,9 +26,6 @@ from datetime import datetime, timezone
 
 from observer_models import calculate_z_bin, generate_event_id
 
-# Drift guardrail (leg guidance)
-from drift_guardrail import Vec3, build_direction_from_route
-
 
 # =============================================================================
 # CURRENT CONTEXT (Immutable Snapshot)
@@ -59,10 +56,9 @@ class CurrentContext:
     session_id: Optional[str] = None
     cmdr_name: Optional[str] = None
 
-    # Drift Guardrail (NavRoute guidance) snapshot for the Observation overlay
-    drift_status: str = "-"
-    drift_candidates: Tuple[Dict[str, Any], ...] = ()
-    drift_meta: Dict[str, Any] = field(default_factory=dict)
+    # Z-target tracking (for Next Z Target indicator)
+    last_sample_z_bin: Optional[int] = None
+    z_direction: int = 1  # +1 for +Z, -1 for -Z
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for ObserverNote creation"""
@@ -142,10 +138,9 @@ class JournalStateManager:
         self._session_id: Optional[str] = None
         self._cmdr_name: Optional[str] = None
 
-        # Drift Guardrail snapshot (for Observation overlay)
-        self._drift_status: str = "-"
-        self._drift_candidates: List[Dict[str, Any]] = []
-        self._drift_meta: Dict[str, Any] = {}
+        # Z-target tracking
+        self._last_sample_z_bin: Optional[int] = None
+        self._z_direction: int = 1  # +1 for +Z, -1 for -Z
 
         # Callbacks for Z-bin changes
         self._z_bin_callbacks: List[Callable[[ZBinChangeEvent], None]] = []
@@ -154,13 +149,6 @@ class JournalStateManager:
         self._z_bin_history: List[ZBinChangeEvent] = []
         self._max_history = 100
 
-        # -----------------------------------------------------------------
-        # Drift Guardrail state (optional feature)
-        # -----------------------------------------------------------------
-        self._leg_start_pos: Optional[Vec3] = None
-        self._leg_dir_unit: Vec3 = (0.0, 0.0, 0.0)
-        self._leg_step_ly: float = 50.0
-        self._leg_locked: bool = False
 
     # =========================================================================
     # SESSION MANAGEMENT
@@ -300,21 +288,45 @@ class JournalStateManager:
                 last_event_timestamp=self._last_event_timestamp,
                 session_id=self._session_id,
                 cmdr_name=self._cmdr_name,
-                drift_status=self._drift_status,
-                drift_candidates=tuple(self._drift_candidates),
-                drift_meta=dict(self._drift_meta) if self._drift_meta else {},
+                last_sample_z_bin=self._last_sample_z_bin,
+                z_direction=self._z_direction,
             )
 
     # =========================================================================
-    # DRIFT GUARDRAIL (SNAPSHOT for overlay)
+    # Z-TARGET TRACKING
     # =========================================================================
 
-    def set_drift_snapshot(self, status: str, candidates: List[Dict[str, Any]], meta: Dict[str, Any]):
-        """Store latest Drift Guardrail data for the Observation overlay."""
+    def set_last_sample_z_bin(self, z_bin: int):
+        """Update the last saved sample's Z-bin (called after a sample is saved)."""
         with self._lock:
-            self._drift_status = status or "-"
-            self._drift_candidates = list(candidates or [])
-            self._drift_meta = dict(meta or {})
+            old = self._last_sample_z_bin
+            self._last_sample_z_bin = int(z_bin)
+            # Auto-detect direction if we have a previous sample
+            if old is not None and z_bin != old:
+                self._z_direction = 1 if z_bin > old else -1
+
+    def set_z_direction(self, direction: int):
+        """Set Z direction: +1 for +Z, -1 for -Z."""
+        with self._lock:
+            self._z_direction = 1 if direction >= 0 else -1
+
+    def get_z_target(self) -> Dict[str, Any]:
+        """Get current Z-target info for the overlay."""
+        with self._lock:
+            current_z = self._star_pos[2]
+            last = self._last_sample_z_bin
+            direction = self._z_direction
+            if last is not None:
+                target_z = last + (50 * direction)
+            else:
+                # No sample yet: target is current z_bin + 50 in the current direction
+                target_z = self._z_bin + (50 * direction)
+            return {
+                "last_sample_z_bin": last,
+                "target_z": target_z,
+                "direction": direction,
+                "current_z": current_z,
+            }
 
     def get_z_bin(self) -> int:
         """Get current Z-bin (thread-safe convenience method)"""
@@ -325,77 +337,6 @@ class JournalStateManager:
         """Get current system name (thread-safe convenience method)"""
         with self._lock:
             return self._system_name
-
-    # =========================================================================
-    # DRIFT GUARDRAIL (LEG) STATE
-    # =========================================================================
-
-    def get_leg_state(self) -> Dict[str, Any]:
-        """Get a snapshot of current leg state (thread-safe)."""
-        with self._lock:
-            return {
-                "leg_start_pos": self._leg_start_pos,
-                "leg_dir_unit": self._leg_dir_unit,
-                "leg_step_ly": self._leg_step_ly,
-                "leg_locked": self._leg_locked,
-            }
-
-    def ensure_leg_initialized(self):
-        """Ensure leg_start_pos is set (defaults to current position)."""
-        with self._lock:
-            if self._leg_start_pos is None:
-                self._leg_start_pos = (float(self._star_pos[0]), float(self._star_pos[1]), float(self._star_pos[2]))
-
-    def set_leg_start_here(self):
-        """Set leg start to current StarPos."""
-        with self._lock:
-            self._leg_start_pos = (float(self._star_pos[0]), float(self._star_pos[1]), float(self._star_pos[2]))
-
-    def set_leg_step(self, step_ly: float):
-        """Set ideal step spacing (ly)."""
-        with self._lock:
-            try:
-                step = float(step_ly)
-                if step > 0:
-                    self._leg_step_ly = step
-            except Exception:
-                pass
-
-    def set_leg_direction(self, u: Vec3, lock: Optional[bool] = None):
-        """Set leg direction unit vector (and optionally lock it)."""
-        with self._lock:
-            self._leg_dir_unit = (float(u[0]), float(u[1]), float(u[2]))
-            if lock is not None:
-                self._leg_locked = bool(lock)
-
-    def set_leg_locked(self, locked: bool):
-        """Lock/unlock leg direction updates."""
-        with self._lock:
-            self._leg_locked = bool(locked)
-
-    def update_leg_from_navroute(self, route_positions: list[Vec3], smooth_n: int = 3) -> bool:
-        """Update leg direction from NavRoute positions (if not locked).
-
-        Returns True if direction was updated.
-        """
-        with self._lock:
-            if self._leg_locked:
-                return False
-
-            if not route_positions:
-                return False
-
-            current_pos: Vec3 = (float(self._star_pos[0]), float(self._star_pos[1]), float(self._star_pos[2]))
-            u = build_direction_from_route(current_pos, route_positions, smooth_n=smooth_n)
-            if u == (0.0, 0.0, 0.0):
-                return False
-
-            # Ensure start is set at first update
-            if self._leg_start_pos is None:
-                self._leg_start_pos = current_pos
-
-            self._leg_dir_unit = u
-            return True
 
     # =========================================================================
     # Z-BIN CHANGE CALLBACKS

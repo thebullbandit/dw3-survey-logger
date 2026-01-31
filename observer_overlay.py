@@ -391,7 +391,7 @@ class ObserverOverlay:
 
         # Build sections
         self._build_header(main_frame)
-        self._build_drift_section(main_frame)
+        self._build_z_target_section(main_frame)
         self._build_status_section(main_frame)
         self._build_details_section(main_frame)
         self._build_density_section(main_frame)
@@ -526,58 +526,49 @@ class ObserverOverlay:
         )
         self._lbl_slice_lock.grid(row=4, column=1, columnspan=3, sticky="w", pady=2)
 
-    def _build_drift_section(self, parent: tk.Frame):
-        """Build Drift Guardrail section (NavRoute guidance)."""
-        drift_frame = tk.LabelFrame(
+    def _build_z_target_section(self, parent: tk.Frame):
+        """Build Next Z Target section (replaces Drift Guardrail)."""
+        z_frame = tk.LabelFrame(
             parent,
-            text="DRIFT GUARDRAIL",
+            text="NEXT Z TARGET",
             font=("Consolas", 10, "bold"),
             fg=self.colors.ORANGE,
             bg=self.colors.BG_PANEL,
             relief="ridge",
             bd=2
         )
-        drift_frame.pack(fill="x", pady=(0, 10))
+        z_frame.pack(fill="x", pady=(0, 10))
 
-        hint = tk.Label(
-            drift_frame,
-            text="Shows how far your next plotted jumps drift sideways from the intended survey line.",
-            font=("Consolas", 8),
-            fg=self.colors.MUTED,
-            bg=self.colors.BG_PANEL
-        )
-        hint.pack(anchor="w", padx=10, pady=(6, 2))
+        inner = tk.Frame(z_frame, bg=self.colors.BG_PANEL)
+        inner.pack(fill="x", padx=10, pady=8)
 
-        self._lbl_drift_status = tk.Label(
-            drift_frame,
-            text="Status: -",
-            font=("Consolas", 9, "bold"),
-            fg=self.colors.TEXT,
-            bg=self.colors.BG_PANEL
-        )
-        self._lbl_drift_status.pack(anchor="w", padx=10, pady=(0, 2))
+        fields = [
+            ("Current Z:", "_lbl_current_z"),
+            ("Target Z:", "_lbl_target_z"),
+            ("Remaining:", "_lbl_remaining_z"),
+            ("Direction:", "_lbl_z_direction"),
+        ]
 
-        self._lbl_drift_meta = tk.Label(
-            drift_frame,
-            text="",
-            font=("Consolas", 8),
-            fg=self.colors.MUTED,
-            bg=self.colors.BG_PANEL
-        )
-        self._lbl_drift_meta.pack(anchor="w", padx=10, pady=(0, 4))
+        for idx, (label_text, attr_name) in enumerate(fields):
+            tk.Label(
+                inner,
+                text=label_text,
+                font=("Consolas", 9),
+                fg=self.colors.MUTED,
+                bg=self.colors.BG_PANEL,
+            ).grid(row=idx, column=0, sticky="e", padx=(0, 10), pady=2)
 
-        self._lbl_drift_lines = tk.Label(
-            drift_frame,
-            text="",
-            font=("Consolas", 8),
-            fg=self.colors.TEXT,
-            bg=self.colors.BG_PANEL,
-            justify="left",
-            anchor="w"
-        )
-        self._lbl_drift_lines.pack(fill="x", padx=10, pady=(0, 8))
+            lbl = tk.Label(
+                inner,
+                text="-",
+                font=("Consolas", 9, "bold"),
+                fg=self.colors.TEXT,
+                bg=self.colors.BG_PANEL,
+            )
+            lbl.grid(row=idx, column=1, sticky="w", pady=2)
+            setattr(self, attr_name, lbl)
 
-        self._drift_frame = drift_frame
+        self._z_target_frame = z_frame
 
     def _build_status_section(self, parent: tk.Frame):
         """Build slice status section (radio buttons)"""
@@ -1047,38 +1038,38 @@ class ObserverOverlay:
         if hasattr(self, "_lbl_hotkey") and self._lbl_hotkey is not None:
             self._lbl_hotkey.config(text=self.hotkey_hint or "-")
 
-        # Drift Guardrail
+        # Next Z Target
         try:
-            drift_status = getattr(self._context, "drift_status", "-") or "-"
-            self._lbl_drift_status.config(text=f"Status: {drift_status}")
+            current_z = self._context.star_pos[2]
+            last_sample_z_bin = getattr(self._context, "last_sample_z_bin", None)
+            z_direction = getattr(self._context, "z_direction", 1)
 
-            meta = getattr(self._context, "drift_meta", {}) or {}
-            step = meta.get("step_ly")
-            axis = meta.get("axis")
-            locked = meta.get("locked")
-            meta_bits = []
-            if step:
-                meta_bits.append(f"step {step} ly")
-            if axis:
-                meta_bits.append(str(axis))
-            if locked is not None:
-                meta_bits.append("locked" if locked else "unlocked")
-            self._lbl_drift_meta.config(text=" | ".join(meta_bits))
+            self._lbl_current_z.config(text=f"{current_z:,.1f} ly")
 
-            candidates = list(getattr(self._context, "drift_candidates", ()) or ())
-            lines = []
-            for c in candidates[:5]:
-                try:
-                    name = str(c.get("system") or "?")
-                    drift = float(c.get("drift_ly", 0.0))
-                    ideal = float(c.get("ideal_offset_ly", 0.0))
-                    along = float(c.get("along_ly", 0.0))
-                    lines.append(f"{name}: drift {drift:5.1f} ly | ideal {ideal:5.1f} ly | along {along:+6.0f} ly")
-                except Exception:
-                    continue
-            if not lines:
-                lines = ["(No upcoming jumps yet)"]
-            self._lbl_drift_lines.config(text="\n".join(lines))
+            if last_sample_z_bin is not None:
+                target_z = last_sample_z_bin + (50 * z_direction)
+            else:
+                # No sample yet — use current z_bin + step
+                target_z = self._context.z_bin + (50 * z_direction)
+
+            self._lbl_target_z.config(text=f"{target_z:,} ly")
+
+            remaining = abs(target_z - current_z)
+            self._lbl_remaining_z.config(text=f"{remaining:,.1f} ly")
+
+            # Color coding for remaining
+            if remaining <= 10:
+                color = self.colors.GREEN
+            elif remaining <= 20:
+                color = self.colors.ORANGE
+            else:
+                color = self.colors.TEXT
+            self._lbl_remaining_z.config(fg=color)
+
+            dir_text = "+Z" if z_direction >= 1 else "-Z"
+            if last_sample_z_bin is None:
+                dir_text += "  (save first sample to set direction)"
+            self._lbl_z_direction.config(text=dir_text)
         except Exception:
             pass
 

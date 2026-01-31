@@ -1029,10 +1029,6 @@ class Earth2View:
         self.widgets["lbl_goldilocks_category"] = lbl_goldilocks_category
         self.widgets["lbl_goldilocks_metrics"] = lbl_goldilocks_metrics
 
-        # Drift Guardrail is shown inside the Observation window (ObserverOverlay),
-        # not on the main screen. Presenter still calls update_drift_guardrail(),
-        # but the main view only caches the latest snapshot.
-        
         # Store references
         self.widgets["lbl_sys"] = lbl_sys
         # Presenter compatibility aliases
@@ -1485,20 +1481,6 @@ class Earth2View:
             # Hide goldilocks frame if no data
             self.widgets["goldilocks_frame"].pack_forget()
 
-    def update_drift_guardrail(self, drift_status: str, candidates: List[Dict[str, Any]], meta: Dict[str, Any]):
-        """Receive Drift Guardrail updates.
-
-        The Drift Guardrail UI now lives in the Observation overlay window, not
-        on the main screen. We still cache the latest values here for any
-        future use/debugging.
-        """
-        try:
-            self._ui_cache["drift_status"] = drift_status or "-"
-            self._ui_cache["drift_candidates"] = list(candidates or [])
-            self._ui_cache["drift_meta"] = dict(meta or {})
-        except Exception:
-            return
-    
     def update_statistics(self, stats_data: Dict[str, Any]):
         """Update statistics panel"""
         # Session stats
