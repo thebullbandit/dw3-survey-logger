@@ -7,8 +7,7 @@
 import os
 
 # Always resolve paths relative to this spec file (CI-proof)
-ROOT = os.path.dirname(os.path.abspath(__file__))
-
+ROOT = os.path.dirname(os.path.abspath(globals().get("__specfile__", os.getcwd())))
 a = Analysis(
     ['main.py'],
     pathex=[ROOT],
