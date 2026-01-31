@@ -11,7 +11,7 @@ Because development is ongoing and iterative, **bugs and rough edges should be e
 
 ## Known Issues (v0.9.9)
 
-The following issues are **known and confirmed** in version **0.9.8**.  
+The following issues are **known and confirmed** in version **0.9.9**.  
 They do **not affect collected data integrity**, but may impact usability.
 
 
