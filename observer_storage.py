@@ -73,6 +73,7 @@ class ObserverStorage:
     """
 
     TABLE_NAME = "observer_notes"
+    MAX_SYSTEMS_PER_SAMPLE = 20
 
     def __init__(self, db_path: Path, enable_wal: bool = True):
         """
@@ -220,7 +221,16 @@ class ObserverStorage:
 
             # Assign system index within this slice sample run (resets when sample_index increments)
             if getattr(note, "system_index", None) is None:
-                note.system_index = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index)
+                next_idx = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index)
+
+                # Hard cap: max systems per sample
+                if next_idx > self.MAX_SYSTEMS_PER_SAMPLE:
+                    raise ValueError(
+                        f"Sample #{note.sample_index} already has {self.MAX_SYSTEMS_PER_SAMPLE} systems. "
+                        "Mark the sample as COMPLETE to start the next sample."
+                    )
+
+                note.system_index = next_idx
 
             # Get previous hash for chain
             prev_hash = self._get_latest_hash()
@@ -242,11 +252,12 @@ class ObserverStorage:
         """
         cursor = self.conn.execute(
             f"""
-            SELECT COALESCE(SUM(CASE WHEN slice_status = 'complete' THEN 1 ELSE 0 END), 0) + 1 AS idx
+            SELECT COALESCE(COUNT(DISTINCT sample_index), 0) + 1 AS idx
             FROM {self.TABLE_NAME}
             WHERE session_id = ?
               AND z_bin = ?
               AND record_status = 'active'
+              AND slice_status = 'complete'
             """,
             (session_id, z_bin),
         )
@@ -639,6 +650,49 @@ class ObserverStorage:
                 """)
 
             return {row['slice_status']: row['count'] for row in cursor.fetchall()}
+
+    def get_sample_counts(self, session_id: str, z_bin: int) -> Dict[str, int]:
+        """
+        Get sample and system counts for the current session and z-bin.
+        
+        Returns a dict with:
+            - current_sample: The current sample_index (1-based)
+            - current_systems: Number of systems in the current sample
+            - total_samples: Total number of completed samples for this slice
+        """
+        with self._lock:
+            # Get current sample index
+            current_sample = self._get_current_slice_sample_index(session_id, z_bin)
+            
+            # Get system count for current sample
+            cursor = self.conn.execute(f"""
+                SELECT COUNT(*) as count
+                FROM {self.TABLE_NAME}
+                WHERE session_id = ?
+                  AND z_bin = ?
+                  AND sample_index = ?
+                  AND record_status = 'active'
+            """, (session_id, z_bin, current_sample))
+            row = cursor.fetchone()
+            current_systems = row['count'] if row else 0
+            
+            # Get total completed samples (samples where slice_status='complete')
+            cursor = self.conn.execute(f"""
+                SELECT COUNT(DISTINCT sample_index) as count
+                FROM {self.TABLE_NAME}
+                WHERE session_id = ?
+                  AND z_bin = ?
+                  AND record_status = 'active'
+                  AND slice_status = 'complete'
+            """, (session_id, z_bin))
+            row = cursor.fetchone()
+            total_samples = row['count'] if row else 0
+            
+            return {
+                'current_sample': current_sample,
+                'current_systems': current_systems,
+                'total_samples': total_samples
+            }
 
     # =========================================================================
     # INTEGRITY VERIFICATION

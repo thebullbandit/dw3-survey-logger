@@ -83,7 +83,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.12",
+        "VERSION": "0.9.13",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -312,14 +312,17 @@ def main():
 
 
     # Instantiate the ObserverOverlay now that presenter + journal monitor exist.
-    # (Some earlier patch versions forgot to create it, leaving observer_overlay = None.)
+    # (Some earlier patch versions broke indentation here; keep it simple and correct.)
     try:
+        # Observer overlay wiring (event-driven refresh): pass a context getter + save callback
         observer_overlay = ObserverOverlay(
             root,
             config,
-            on_observation_saved,
+            get_context_fn=state_manager.get_context,
+            on_save=on_observation_saved,
             session_id=(getattr(journal_monitor, "current_session_id", None) or ""),
-            app_version=str(config.get("VERSION") or "")
+            app_version=str(config.get("VERSION") or ""),
+            observer_storage=observer_storage,
         )
     except Exception as e:
         observer_overlay = None

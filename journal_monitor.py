@@ -398,6 +398,10 @@ class JournalMonitor:
             # Update state manager
             if self.state_manager:
                 self.state_manager.on_commander({'Name': cmdr_name})
+                try:
+                    self.presenter.notify_observer_context_changed()
+                except Exception:
+                    pass
     
     def _handle_location_update(self, evt: Dict[str, Any]):
         """Handle location update (FSDJump or Location event)"""
@@ -431,6 +435,10 @@ class JournalMonitor:
         # Update state manager (Location event only, FSDJump handled separately)
         if self.state_manager and evt.get("event") == "Location":
             self.state_manager.on_location(evt)
+            try:
+                self.presenter.notify_observer_context_changed()
+            except Exception:
+                pass
     
     def _handle_fsd_jump(self, evt: Dict[str, Any]):
         """Handle FSD jump for system tracking"""
@@ -442,6 +450,10 @@ class JournalMonitor:
         # Update state manager (triggers Z-bin change detection)
         if self.state_manager:
             self.state_manager.on_fsd_jump(evt)
+            try:
+                self.presenter.notify_observer_context_changed()
+            except Exception:
+                pass
     
     def _handle_scan(self, evt: Dict[str, Any]):
         """Handle scan event"""
@@ -452,6 +464,10 @@ class JournalMonitor:
         # Update state manager
         if self.state_manager:
             self.state_manager.on_scan(evt)
+            try:
+                self.presenter.notify_observer_context_changed()
+            except Exception:
+                pass
         # Keep Target Lock in sync with what you're currently scanning.
         # If this scan turns into a candidate, presenter.log_candidate() will overwrite these fields.
         try:

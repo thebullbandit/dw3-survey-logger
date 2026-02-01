@@ -47,6 +47,7 @@ class Earth2Presenter:
         self.view.on_rescan = self.handle_rescan
         self.view.on_import_journals = self.handle_import_journals
         self.view.on_options = self.handle_options
+        self.view.on_journal_folder = self.handle_journal_folder
         self.view.on_about = self.handle_about
         
         # UI refresh control
@@ -79,6 +80,29 @@ class Earth2Presenter:
         finally:
             self._refresh_after_id = None
     
+
+
+    def notify_observer_context_changed(self):
+        """Notify UI listeners (e.g., Observer overlay) that journal context changed.
+
+        Safe to call from any thread; schedules Tk event generation on the main thread.
+        """
+        try:
+            root = getattr(self.view, "root", None)
+            if root is None:
+                return
+
+            def _emit():
+                try:
+                    root.event_generate("<<ObserverContextChanged>>", when="tail")
+                except Exception:
+                    pass
+
+            # Ensure we're on Tk main thread
+            root.after(0, _emit)
+        except Exception:
+            pass
+
     # ========================================================================
     # UI REFRESH LOOP
     # ========================================================================
@@ -426,15 +450,14 @@ class Earth2Presenter:
                 except Exception as e:
                     self.model.add_comms_message(f"[✗] Database backup failed: {e}")
                 
-                # 3. Export Density XLSX
+                # 3. Export Density XLSX (multiple files, one per sample)
                 try:
                     if not self.observer_storage:
                         self.model.add_comms_message("[✗] Observer storage not available (XLSX skipped)")
                     else:
                         template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
-                        out_path = export_dir / f"DW3_Stellar_Density_Worksheet_{timestamp}.xlsx"
                         
-                        from density_worksheet_exporter import export_density_worksheet_from_notes
+                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file
                         
                         notes = self.observer_storage.get_active()
                         
@@ -466,17 +489,21 @@ class Earth2Presenter:
                                 s_min, s_max = min(sample_indexes), max(sample_indexes)
                                 sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
                             
-                            final_path = export_density_worksheet_from_notes(
+                            # Export as multiple files (one per sample)
+                            created_files = export_density_worksheet_from_notes_multi_file(
                                 notes,
                                 template_path,
-                                out_path,
+                                export_dir,  # Directory, not specific file
                                 cmdr_name=cmdr,
                                 sample_tag=sample_tag,
                                 z_bin=z_bin,
                             )
                             
-                            self.model.add_comms_message(f"[✓] Density XLSX exported: {final_path.name}")
-                            export_count += 1
+                            num_files = len(created_files)
+                            self.model.add_comms_message(f"[✓] Density XLSX exported: {num_files} sample file(s) created")
+                            for fp in created_files:
+                                self.model.add_comms_message(f"    - {fp.name}")
+                            export_count += num_files
                 except Exception as e:
                     self.model.add_comms_message(f"[✗] Density XLSX export failed: {e}")
                     import traceback
@@ -494,7 +521,7 @@ class Earth2Presenter:
             import traceback
             traceback.print_exc()
     def handle_export_density_xlsx(self):
-        """Handle DW3 density worksheet XLSX export request with folder picker"""
+        """Handle DW3 density worksheet XLSX export request with folder picker - creates one file per sample"""
         try:
             from pathlib import Path
             from datetime import datetime
@@ -508,7 +535,7 @@ class Earth2Presenter:
             # Ask user to select export folder
             initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
             export_dir = filedialog.askdirectory(
-                title="Select Export Folder for Density Worksheet",
+                title="Select Export Folder for Density Worksheets",
                 initialdir=initial_dir,
                 parent=self.view.root
             )
@@ -522,17 +549,14 @@ class Earth2Presenter:
             # Save this directory for next time
             self.config["EXPORT_DIR"] = str(export_dir)
 
-            self.model.add_comms_message("[SYSTEM] Starting density worksheet export...")
+            self.model.add_comms_message("[SYSTEM] Starting density worksheet export (one file per sample)...")
 
             def export_thread():
                 try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    out_path = export_dir / f"DW3_Stellar_Density_Worksheet_{ts}.xlsx"
-
                     # Template ships with the app under ./templates
                     template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
 
-                    from density_worksheet_exporter import export_density_worksheet_from_notes
+                    from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file
 
                     notes = self.observer_storage.get_active()
 
@@ -563,16 +587,20 @@ class Earth2Presenter:
                         s_min, s_max = min(sample_indexes), max(sample_indexes)
                         sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
 
-                    final_path = export_density_worksheet_from_notes(
+                    # Export as multiple files (one per sample)
+                    created_files = export_density_worksheet_from_notes_multi_file(
                         notes,
                         template_path,
-                        out_path,
+                        export_dir,  # Directory, not specific file
                         cmdr_name=cmdr,
                         sample_tag=sample_tag,
                         z_bin=z_bin,
                     )
 
-                    self.model.add_comms_message(f"[SYSTEM] Density worksheet exported: {final_path}")
+                    num_files = len(created_files)
+                    self.model.add_comms_message(f"[SYSTEM] Density worksheets exported: {num_files} sample file(s)")
+                    for fp in created_files:
+                        self.model.add_comms_message(f"    - {fp.name}")
                 except Exception as e:
                     self.model.add_comms_message(f"[ERROR] Density worksheet export failed: {e}")
 
@@ -665,111 +693,143 @@ class Earth2Presenter:
         except Exception as e:
             print(f"[PRESENTER ERROR] Import journals: {e}")
 
-    def handle_options(self):
-        """Handle Options button. Supports setting Data folder (DB/logs) + Export folder."""
+
+    def handle_journal_folder(self):
+        """Let the user choose their Elite Dangerous journal folder (applies live)."""
         try:
+            from tkinter import filedialog, messagebox
             from pathlib import Path
             import json
 
-            current_export = str(self.config.get("EXPORT_DIR") or "")
-            current_data = str(self.config.get("OUTDIR") or "")
-            current_hotkey = str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
-            current_journal = str(self.config.get("JOURNAL_DIR") or "")
+            current = self.config.get("JOURNAL_DIR", "")
+            initial = ""
+            try:
+                if current:
+                    initial = str(Path(current))
+            except Exception:
+                initial = ""
 
-            result = self.view.show_options_dialog(current_export, current_data, current_hotkey, current_journal)
-            if not result:
+            folder = filedialog.askdirectory(
+                title="Select Elite Dangerous Journal Folder",
+                initialdir=initial or None,
+                mustexist=True
+            )
+            if not folder:
+                return  # cancelled
+
+            journal_dir = Path(folder).expanduser()
+
+            if not journal_dir.exists():
+                try:
+                    messagebox.showwarning(
+                        "Journal Folder",
+                        f"Folder not found:\n{journal_dir}",
+                        parent=self.view.root
+                    )
+                except Exception:
+                    pass
                 return
 
-            # Regression guard: Options dialog must return journal_dir.
-            # If it ever disappears, warn loudly so we catch the bug immediately.
-            if isinstance(result, dict) and "journal_dir" not in result:
-                msg = ("[WARN] Options dialog result missing 'journal_dir'. "
-                       "Journal folder changes will not persist. "
-                       "Check view.show_options_dialog() return payload.")
-                try:
-                    self.model.add_comms_message(msg)
-                except Exception:
-                    pass
-                try:
-                    import logging
-                    logging.getLogger(__name__).warning(msg + f" result_keys={list(result.keys())}")
-                except Exception:
-                    pass
+            # Update config (in-memory)
+            self.config["JOURNAL_DIR"] = journal_dir
 
-            data_dir = Path(result["data_dir"]).expanduser()
-            export_dir = Path(result["export_dir"]).expanduser()
-            journal_dir = Path(result.get("journal_dir") or current_journal or "").expanduser()
+            # Persist to bootstrap settings file (stable across OUTDIR changes)
+            settings_path = self.config.get("BOOTSTRAP_SETTINGS_PATH", "")
+            try:
+                sp = Path(settings_path) if settings_path else (Path.home() / ".dw3_survey_logger" / "settings.json")
+                sp.parent.mkdir(parents=True, exist_ok=True)
 
-            # Hotkey
-            requested_hotkey = str(result.get("hotkey_label") or result.get("hotkey") or "").strip() or current_hotkey
+                data = {}
+                if sp.exists():
+                    try:
+                        data = json.loads(sp.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = {}
+
+                data["journal_dir"] = str(journal_dir)
+
+                # Preserve other known keys if they exist in config
+                outdir = self.config.get("OUTDIR")
+                export_dir = self.config.get("EXPORT_DIR")
+                hotkey_label = self.config.get("HOTKEY_LABEL")
+                if outdir:
+                    data.setdefault("data_dir", str(outdir))
+                if export_dir:
+                    data.setdefault("export_dir", str(export_dir))
+                if hotkey_label:
+                    data.setdefault("hotkey_label", str(hotkey_label))
+
+                sp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            except Exception as e:
+                self.model.add_comms_message(f"[WARN] Could not save journal folder: {e}")
+
+            # Apply live to monitor + trigger rescan
+            try:
+                if self.journal_monitor and hasattr(self.journal_monitor, "set_journal_dir"):
+                    self.journal_monitor.set_journal_dir(journal_dir)
+            except Exception as e:
+                self.model.add_comms_message(f"[WARN] Journal monitor update failed: {e}")
+
+            self.model.add_comms_message(f"[OPTIONS] Journal folder set to: {journal_dir}")
+        except Exception as e:
+            self.model.add_comms_message(f"[ERROR] Journal folder selection failed: {e}")
+
+    def handle_options(self):
+        """Handle Options button (now just hotkey settings)."""
+        try:
+            current_hotkey = str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
+
+            # Show simplified hotkey-only dialog
+            new_hotkey = self.view.show_hotkey_dialog()
+            if not new_hotkey:
+                return  # User cancelled
+
+            # Validate and normalize the hotkey
             try:
                 from hotkey_manager import parse_hotkey_label
-                _p, _tk, normalized = parse_hotkey_label(requested_hotkey)
+                _p, _tk, normalized = parse_hotkey_label(new_hotkey)
                 self.config["HOTKEY_LABEL"] = normalized
             except Exception as e:
-                # Keep previous if invalid
+                # Show error and keep previous hotkey
                 try:
                     from tkinter import messagebox
-                    messagebox.showwarning("Options", f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}", parent=self.view.root)
+                    messagebox.showwarning(
+                        "Hotkey Settings", 
+                        f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}", 
+                        parent=self.view.root
+                    )
                 except Exception:
                     pass
                 self.config["HOTKEY_LABEL"] = current_hotkey
+                return
 
-            old_data_dir = Path(self.config.get("OUTDIR") or data_dir)
-
-            # Update runtime config (exports can apply immediately)
-            self.config["EXPORT_DIR"] = export_dir
-            # Journal directory can apply immediately
-            if str(journal_dir).strip():
-                self.config["JOURNAL_DIR"] = journal_dir
-            self.config["OUTCSV"] = export_dir
-
-            # If data folder changed, update derived paths in config.
-            # NOTE: the database + observer storage are already open, so relocation requires restart.
-            if data_dir != old_data_dir:
-                self.config["OUTDIR"] = data_dir
-                self.config["DB_PATH"] = data_dir / "DW3_Earth2.db"
-                self.config["LOGFILE"] = data_dir / "DW3_Earth2_Logger.log"
-
-                self.model.add_comms_message(f"[SYSTEM] Data folder set to: {data_dir}")
-                self.model.add_comms_message("[SYSTEM] Restart required to move the live database to the new folder.")
-            else:
-                self.model.add_comms_message(f"[SYSTEM] Data folder unchanged: {data_dir}")
-
-            # Journal folder feedback
+            # Save to config file
             try:
-                prev_journal = Path(str(current_journal or "")).expanduser() if str(current_journal or "").strip() else None
-            except Exception:
-                prev_journal = None
-            if str(journal_dir).strip() and (prev_journal is None or journal_dir != prev_journal):
-                self.model.add_comms_message(f"[SYSTEM] Journal folder set to: {journal_dir}")
-            else:
-                self.model.add_comms_message(f"[SYSTEM] Journal folder unchanged: {journal_dir}")
-            self.model.add_comms_message(f"[SYSTEM] Export folder set to: {export_dir}")
-
-            # Persist settings (single file at stable location)
-            bootstrap_path = self.config.get("BOOTSTRAP_SETTINGS_PATH")
-            if bootstrap_path:
-                bootstrap_path = Path(bootstrap_path)
-                bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
-                # Read-merge-write to preserve update checker fields
-                existing = {}
-                try:
-                    if bootstrap_path.exists():
-                        existing = json.loads(bootstrap_path.read_text(encoding="utf-8"))
-                except Exception:
-                    existing = {}
-                existing.update({
-                    "data_dir": str(data_dir),
-                    "export_dir": str(export_dir),
-                    "journal_dir": str(self.config.get("JOURNAL_DIR") or journal_dir or ""),
-                    "hotkey_label": str(self.config.get("HOTKEY_LABEL") or "Ctrl+Alt+O"),
-                })
-                bootstrap_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+                from pathlib import Path
+                import json
+                
+                config_path = Path(self.config.get("OUTDIR", ".")) / "config.json"
+                
+                if config_path.exists():
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config_data = json.load(f)
+                else:
+                    config_data = {}
+                
+                config_data["HOTKEY_LABEL"] = self.config["HOTKEY_LABEL"]
+                
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(config_data, f, indent=2)
+                
+                self.model.add_comms_message(
+                    f"[OPTIONS] Hotkey updated to: {self.config['HOTKEY_LABEL']}\n"
+                    "Restart required for changes to take effect."
+                )
+            except Exception as e:
+                self.model.add_comms_message(f"[ERROR] Failed to save hotkey: {e}")
 
         except Exception as e:
-            self.model.add_comms_message(f"[ERROR] Failed to save options: {e}")
-            print(f"[PRESENTER ERROR] Options: {e}")
+            self.model.add_comms_message(f"[ERROR] Options failed: {e}")
 
     def handle_about(self):
         """Handle About dialog (includes copyable diagnostics)."""

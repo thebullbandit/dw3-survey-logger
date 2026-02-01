@@ -176,9 +176,11 @@ class ObserverOverlay:
         self,
         parent: tk.Tk,
         config: Dict[str, Any],
+        get_context_fn: Optional[Callable[[], CurrentContext]] = None,
         on_save: Optional[Callable[[ObserverNote], None]] = None,
         session_id: str = "",
-        app_version: str = ""
+        app_version: str = "",
+        observer_storage=None
     ):
         """
         Initialize overlay.
@@ -189,12 +191,16 @@ class ObserverOverlay:
             on_save: Callback when observation is saved
             session_id: Current session ID
             app_version: App version string
+            observer_storage: ObserverStorage instance for sample tracking
         """
         self.parent = parent
         self.config = config
+        self.get_context_fn = get_context_fn
+        self._ctx_bind_id = None
         self.on_save = on_save
         self.session_id = session_id
         self.app_version = app_version
+        self.observer_storage = observer_storage
 
         # Hotkey hint shown in the overlay (set by main.py)
         # Example: "Hotkey: Ctrl+Shift+O (global)" or "Hotkey: Ctrl+O (in-app)"
@@ -249,6 +255,7 @@ class ObserverOverlay:
         if self.window is not None and self.window.winfo_exists():
             # Update the context display (system name, z-bin, etc.)
             self._populate_from_context()
+            self._ensure_context_binding()
             self.window.lift()
             self.window.focus_force()
             return
@@ -257,7 +264,16 @@ class ObserverOverlay:
         self._create_window()
         self._build_ui()
         self._populate_from_context()
+        self._ensure_context_binding()
 
+        # Set initial compact size (width x height) - starts at minimum size
+        self.window.update_idletasks()  # Let the UI pack first
+        self.window.geometry("480x728")  
+        # Lock a sensible minimum size so status toggles can't shrink the window and hide buttons
+        self._base_width, self._base_height = 480, 728
+        self.window.minsize(self._base_width, self._base_height)
+
+        
         # Center on parent
         self._center_on_parent()
 
@@ -266,6 +282,7 @@ class ObserverOverlay:
 
     def hide(self):
         """Hide/close the overlay"""
+        self._remove_context_binding()
         if self.window is not None and self.window.winfo_exists():
             self.window.destroy()
         self.window = None
@@ -273,6 +290,39 @@ class ObserverOverlay:
     def is_visible(self) -> bool:
         """Check if overlay is currently visible"""
         return self.window is not None and self.window.winfo_exists()
+
+    def _ensure_context_binding(self):
+        """Bind to context-change events while overlay is visible."""
+        if self._ctx_bind_id is not None:
+            return
+        # Bind on the parent (root) so journal/presenter can event_generate there.
+        try:
+            self._ctx_bind_id = self.parent.bind("<<ObserverContextChanged>>", self._on_context_changed, add="+")
+        except TypeError:
+            # Older Tk variants may not support add as str; fall back without add.
+            self._ctx_bind_id = self.parent.bind("<<ObserverContextChanged>>", self._on_context_changed)
+
+    def _remove_context_binding(self):
+        """Unbind context-change events when overlay closes."""
+        if self._ctx_bind_id is None:
+            return
+        try:
+            self.parent.unbind("<<ObserverContextChanged>>", self._ctx_bind_id)
+        except Exception:
+            pass
+        self._ctx_bind_id = None
+
+    def _on_context_changed(self, event=None):
+        """Refresh overlay context when the app notifies new journal/state data."""
+        if self.window is None or (hasattr(self.window, "winfo_exists") and not self.window.winfo_exists()):
+            return
+        if callable(self.get_context_fn):
+            try:
+                self._context = self.get_context_fn()
+            except Exception:
+                # Never crash UI on a refresh failure; keep last known context.
+                pass
+        self._populate_from_context()
 
     # =========================================================================
     # WINDOW CREATION
@@ -289,8 +339,8 @@ class ObserverOverlay:
         # Tk does not automatically inherit the root icon for Toplevel.
         self._load_icon_for_toplevel()
 
-        # Set minimum size
-        self.window.minsize(500, 400)
+        # Set minimum size - more compact
+        self.window.minsize(480, 425)  # Increased minimum height for better visibility
 
         # Keep it associated with the parent window, but DO NOT make it modal.
         # Modal (grab_set) can freeze the app if the game blocks the overlay from coming to front.
@@ -387,9 +437,9 @@ class ObserverOverlay:
             "repeat_needed": tk.BooleanVar(value=False),
         }
 
-        # Main container with padding
+        # Main container with padding - reduced for compact layout
         main_frame = tk.Frame(self.window, bg=self.colors.BG)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        main_frame.pack(fill="both", expand=True, padx=8, pady=8)  # Reduced from 10,10
 
         # Build sections
         self._build_header(main_frame)
@@ -415,11 +465,18 @@ class ObserverOverlay:
             relief="ridge",
             bd=2
         )
-        header.pack(fill="x", pady=(0, 10))
+        header.pack(fill="x", pady=(0, 4))
 
         # Grid for context fields
         fields_frame = tk.Frame(header, bg=self.colors.BG_PANEL)
-        fields_frame.pack(fill="x", padx=10, pady=8)
+        fields_frame.pack(fill="x", padx=8, pady=6)
+
+        # Balance columns so the content sits visually centered in the section.
+        # Labels (0,2) stay compact; values (1,3) share the remaining width.
+        fields_frame.grid_columnconfigure(0, weight=0)
+        fields_frame.grid_columnconfigure(1, weight=1)
+        fields_frame.grid_columnconfigure(2, weight=0)
+        fields_frame.grid_columnconfigure(3, weight=1)
 
         # Row 1: System and Z-bin
         tk.Label(
@@ -539,41 +596,95 @@ class ObserverOverlay:
             relief="ridge",
             bd=2
         )
-        z_frame.pack(fill="x", pady=(0, 10))
+        z_frame.pack(fill="x", pady=(0, 4))
 
         inner = tk.Frame(z_frame, bg=self.colors.BG_PANEL)
-        inner.pack(fill="x", padx=10, pady=8)
+        inner.pack(fill="x", padx=8, pady=6)
 
-        fields = [
-            ("Current slice:", "_lbl_current_z"),
-            ("Next slice:", "_lbl_target_z"),
-            ("", "_lbl_jump_instruction"),  # Combined distance + direction on one line
-        ]
+        # Grid layout:
+        #   col 0 = labels (right aligned)
+        #   col 1 = values (stretch)
+        #   col 2 = a small progress panel (fixed)
+        inner.grid_columnconfigure(0, weight=0)
+        inner.grid_columnconfigure(1, weight=1)
+        inner.grid_columnconfigure(2, weight=0)
 
-        for idx, (label_text, attr_name) in enumerate(fields):
-            if label_text:  # Only create label if text provided
-                tk.Label(
-                    inner,
-                    text=label_text,
-                    font=("Consolas", 9),
-                    fg=self.colors.MUTED,
-                    bg=self.colors.BG_PANEL,
-                ).grid(row=idx, column=0, sticky="e", padx=(0, 10), pady=2)
+        # Row 1: Current slice
+        tk.Label(
+            inner,
+            text="Current slice:",
+            font=("Consolas", 9),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+        ).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=2)
 
-            lbl = tk.Label(
-                inner,
-                text="-",
-                font=("Consolas", 9, "bold"),
-                fg=self.colors.TEXT,
-                bg=self.colors.BG_PANEL,
-            )
-            
-            # For the jump instruction, span both columns and center it
-            if attr_name == "_lbl_jump_instruction":
-                lbl.grid(row=idx, column=0, columnspan=2, sticky="", pady=(8, 2))
-            else:
-                lbl.grid(row=idx, column=1, sticky="w", pady=2)
-            setattr(self, attr_name, lbl)
+        self._lbl_current_z = tk.Label(
+            inner,
+            text="-",
+            font=("Consolas", 9, "bold"),
+            fg=self.colors.TEXT,
+            bg=self.colors.BG_PANEL,
+        )
+        self._lbl_current_z.grid(row=0, column=1, sticky="w", pady=2)
+
+        # Row 2: Next slice
+        tk.Label(
+            inner,
+            text="Next slice:",
+            font=("Consolas", 9),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+        ).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=2)
+
+        self._lbl_target_z = tk.Label(
+            inner,
+            text="-",
+            font=("Consolas", 9, "bold"),
+            fg=self.colors.ORANGE,  # Orange like Z-BIN in context
+            bg=self.colors.BG_PANEL,
+        )
+        self._lbl_target_z.grid(row=1, column=1, sticky="w", pady=2)
+
+        # Row 3: Jump instruction
+        self._lbl_jump_instruction = tk.Label(
+            inner,
+            text="Jump",
+            font=("Consolas", 9, "bold"),
+            fg=self.colors.TEXT,
+            bg=self.colors.BG_PANEL,
+            anchor="center",
+            justify="center",
+        )
+        self._lbl_jump_instruction.grid(row=2, column=0, columnspan=1, sticky="ew", pady=(8, 2))
+
+        # Right-side progress panel
+        progress = tk.Frame(
+            inner,
+            bg=self.colors.BG_FIELD,
+            relief="solid",
+            bd=1,
+            highlightthickness=1,
+            highlightbackground=self.colors.BORDER_OUTER,
+        )
+        progress.grid(row=0, column=2, rowspan=3, sticky="nsew", padx=(14, 0), pady=(0, 0))
+
+        tk.Label(
+            progress,
+            text="PROGRESS",
+            font=("Consolas", 9, "bold"),
+            fg=self.colors.ORANGE,
+            bg=self.colors.BG_FIELD,
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        self._lbl_sample_count = tk.Label(
+            progress,
+            text="-",
+            font=("Consolas", 9),
+            fg=self.colors.TEXT,
+            bg=self.colors.BG_FIELD,
+            justify="left",
+        )
+        self._lbl_sample_count.pack(anchor="w", padx=8, pady=(0, 6))
 
         self._z_target_frame = z_frame
 
@@ -588,11 +699,11 @@ class ObserverOverlay:
             relief="ridge",
             bd=2
         )
-        status_frame.pack(fill="x", pady=(0, 10))
+        status_frame.pack(fill="x", pady=(0, 4))
 
         # Radio buttons in a row
         radio_frame = tk.Frame(status_frame, bg=self.colors.BG_PANEL)
-        radio_frame.pack(fill="x", padx=10, pady=8)
+        radio_frame.pack(fill="x", padx=8, pady=6)
 
         tk.Label(
             status_frame,
@@ -600,7 +711,7 @@ class ObserverOverlay:
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL
-        ).pack(anchor="w", padx=10, pady=(0, 6))
+        ).pack(anchor="w", padx=10, pady=(0, 4))
 
         statuses = [
             (SliceStatus.IN_PROGRESS, "In Progress"),
@@ -649,7 +760,7 @@ class ObserverOverlay:
         # Don't pack yet - controlled by _update_section_visibility
 
         inner = tk.Frame(self._details_frame, bg=self.colors.BG_PANEL)
-        inner.pack(fill="x", padx=10, pady=8)
+        inner.pack(fill="x", padx=8, pady=6)
 
         # Confidence slider
         conf_frame = tk.Frame(inner, bg=self.colors.BG_PANEL)
@@ -661,7 +772,7 @@ class ObserverOverlay:
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=(0, 4))
 
         tk.Label(
             conf_frame,
@@ -716,7 +827,7 @@ class ObserverOverlay:
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=(0, 4))
 
         tk.Label(
             method_frame,
@@ -767,7 +878,7 @@ class ObserverOverlay:
             bd=2
         )
         # Always visible - these are the main data entry fields
-        self._density_frame.pack(fill="x", pady=(0, 10))
+        self._density_frame.pack(fill="x", pady=(0, 4))
 
         help_lbl = tk.Label(
             self._density_frame,
@@ -779,7 +890,7 @@ class ObserverOverlay:
         help_lbl.pack(anchor="w", padx=10, pady=(6, 0))
 
         inner = tk.Frame(self._density_frame, bg=self.colors.BG_PANEL)
-        inner.pack(fill="x", padx=10, pady=8)
+        inner.pack(fill="x", padx=8, pady=6)
 
         # Grid layout for inputs
         fields = [
@@ -853,7 +964,7 @@ class ObserverOverlay:
             relief="ridge",
             bd=2
         )
-        flags_frame.pack(fill="x", pady=(0, 10))
+        flags_frame.pack(fill="x", pady=(0, 4))
 
         # NOTE: Don't mix pack + grid in the same container.
         # Keep help text packed on the frame, and use a separate inner frame for grid widgets.
@@ -863,7 +974,7 @@ class ObserverOverlay:
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL
-        ).pack(anchor="w", padx=10, pady=(0, 6))
+        ).pack(anchor="w", padx=10, pady=(0, 4))
 
         inner = tk.Frame(flags_frame, bg=self.colors.BG_PANEL)
         inner.pack(fill="x", padx=10, pady=(0, 8))
@@ -907,21 +1018,66 @@ class ObserverOverlay:
                 self._tooltips.append(Tooltip(cb, tip, delay_ms=1200))
 
     def _build_notes_section(self, parent: tk.Frame):
-        """Build notes section (multi-line text)"""
+        """Build notes section (multi-line text) - collapsible"""
+        # Track collapsed state
+        self._notes_collapsed = tk.BooleanVar(value=True)
+        
         notes_frame = tk.LabelFrame(
             parent,
-            text="NOTES",
+            text="",  # We'll use a custom header
             font=("Consolas", 10, "bold"),
             fg=self.colors.ORANGE,
             bg=self.colors.BG_PANEL,
             relief="ridge",
             bd=2
         )
-        notes_frame.pack(fill="both", expand=True, pady=(0, 10))
+        notes_frame.pack(fill="both", expand=True, pady=(0, 8))  # Reduced padding
 
+        # Clickable header to expand/collapse
+        header_frame = tk.Frame(notes_frame, bg=self.colors.BG_PANEL, cursor="hand2")
+        header_frame.pack(fill="x", padx=6, pady=4)  # Reduced padding
+        
+        self._notes_arrow = tk.Label(
+            header_frame,
+            text="▶",  # Right arrow when collapsed
+            font=("Consolas", 10, "bold"),
+            fg=self.colors.ORANGE,
+            bg=self.colors.BG_PANEL,
+            cursor="hand2"
+        )
+        self._notes_arrow.pack(side="left", padx=(0, 5))
+        
+        notes_title = tk.Label(
+            header_frame,
+            text="NOTES (click to expand)",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors.ORANGE,
+            bg=self.colors.BG_PANEL,
+            cursor="hand2"
+        )
+        notes_title.pack(side="left")
+        
+        # Hint when collapsed
+        self._notes_hint_collapsed = tk.Label(
+            header_frame,
+            text="— Free text for unusual situations (required if Discard)",
+            font=("Consolas", 8),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+            cursor="hand2"
+        )
+        self._notes_hint_collapsed.pack(side="left", padx=(8, 0))
+        
+        # Bind click to toggle
+        for widget in [header_frame, self._notes_arrow, notes_title, self._notes_hint_collapsed]:
+            widget.bind("<Button-1>", lambda e: self._toggle_notes())
+
+        # Container for text widget (initially hidden)
+        self._notes_content_frame = tk.Frame(notes_frame, bg=self.colors.BG_PANEL)
+        
         # Text widget with scrollbar
-        inner = tk.Frame(notes_frame, bg=self.colors.BG_PANEL)
-        inner.pack(fill="both", expand=True, padx=10, pady=8)
+        inner = tk.Frame(self._notes_content_frame, bg=self.colors.BG_PANEL)
+        inner.pack(fill="both", expand=True, padx=8, pady=(0, 4))  # Reduced padding
 
         scrollbar = tk.Scrollbar(inner, bg=self.colors.BG_PANEL)
         scrollbar.pack(side="right", fill="y")
@@ -933,7 +1089,7 @@ class ObserverOverlay:
             bg=self.colors.BG_FIELD,
             insertbackground=self.colors.TEXT,
             wrap="word",
-            height=5,
+            height=4,  # Reduced from 5
             yscrollcommand=scrollbar.set
         )
         self._notes_widget.pack(fill="both", expand=True)
@@ -947,14 +1103,49 @@ class ObserverOverlay:
 
         scrollbar.config(command=self._notes_widget.yview)
 
-        # Hint label
-        tk.Label(
-            notes_frame,
+        # Hint label (when expanded)
+        self._notes_hint_expanded = tk.Label(
+            self._notes_content_frame,
             text="Free text for anything unusual or important (required if Discard).",
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL
-        ).pack(anchor="w", padx=10, pady=(0, 5))
+        )
+        self._notes_hint_expanded.pack(anchor="w", padx=8, pady=(0, 4))  # Reduced padding
+
+    def _toggle_notes(self):
+        """Toggle notes section collapsed/expanded with dynamic window resizing"""
+        if self._notes_collapsed.get():
+            # Expand
+            self._notes_collapsed.set(False)
+            self._notes_arrow.config(text="▼")  # Down arrow
+            self._notes_hint_collapsed.pack_forget()
+            
+            # Save current window size before expanding
+            self.window.update_idletasks()
+            self._saved_width = self.window.winfo_width()
+            self._saved_height = self.window.winfo_height()
+            
+            # Show notes content
+            self._notes_content_frame.pack(fill="both", expand=True)
+            
+            # Resize window to accommodate notes (add ~140px height)
+            self.window.update_idletasks()
+            new_height = self._saved_height + 140
+            self.window.geometry(f"{self._saved_width}x{new_height}")
+            
+            self._notes_widget.focus_set()  # Focus on text area when expanding
+        else:
+            # Collapse
+            self._notes_collapsed.set(True)
+            self._notes_arrow.config(text="▶")  # Right arrow
+            self._notes_content_frame.pack_forget()
+            
+            # Restore original window size
+            if hasattr(self, '_saved_width') and hasattr(self, '_saved_height'):
+                self.window.geometry(f"{self._saved_width}x{self._saved_height}")
+            
+            self._notes_hint_collapsed.pack(side="left", padx=(8, 0))
 
     def _build_footer(self, parent: tk.Frame):
         """Build footer with Save/Cancel buttons"""
@@ -1083,20 +1274,90 @@ class ObserverOverlay:
             
             self._lbl_jump_instruction.config(text=jump_text, fg=color)
             
+            # Update sample count display
+            self._update_sample_count()
+            
         except Exception:
             pass
+
+    def _update_sample_count(self):
+        """Update the sample count display based on observer storage data"""
+        try:
+            # Only update if we have observer_storage, context, and session_id
+            if (not self.observer_storage or 
+                not self._context or 
+                not self._context.session_id or 
+                self._context.z_bin is None):
+                self._lbl_sample_count.config(text="-")
+                return
+            
+            # Get sample counts from observer storage
+            counts = self.observer_storage.get_sample_counts(
+                self._context.session_id,
+                self._context.z_bin
+            )
+            
+            current_sample = counts['current_sample']
+            current_systems = counts['current_systems']
+            total_samples = counts['total_samples']
+            
+            # Format the display text for the PROGRESS mini-panel.
+            # Use a 2-line layout so it reads like its own section.
+            if total_samples > 0:
+                count_text = (
+                    f"Sample: #{current_sample}\n"
+                    f"System: #{current_systems}\n"
+                    f"Total:  {total_samples}"
+                )
+            else:
+                count_text = (
+                    f"Sample: #{current_sample}\n"
+                    f"System: #{current_systems}"
+                )
+            
+            self._lbl_sample_count.config(text=count_text)
+            
+        except Exception:
+            # If there's any error, just show a dash
+            self._lbl_sample_count.config(text="-")
 
     def _update_section_visibility(self):
         """Show/hide sections based on status selection"""
         status = self._slice_status_var.get()
 
+        # Preserve current window size so toggling status doesn't auto-shrink and hide footer buttons
+        try:
+            cur_w = self.window.winfo_width()
+            cur_h = self.window.winfo_height()
+        except Exception:
+            cur_w = getattr(self, "_base_width", 480)
+            cur_h = getattr(self, "_base_height", 728)
+
         # Details section (confidence, method): show if not in_progress
         if status != SliceStatus.IN_PROGRESS.value:
-            self._details_frame.pack(fill="x", pady=(0, 10), after=self._get_status_frame())
+            self._details_frame.pack(fill="x", pady=(0, 6), after=self._get_status_frame())
         else:
             self._details_frame.pack_forget()
 
+        # Re-apply size (and enforce minimum + required height) after pack/forget changes
+        try:
+            self.window.update_idletasks()
+            min_w = getattr(self, "_base_width", 480)
+            min_h = getattr(self, "_base_height", 728)
+
+            # If we just revealed extra UI (Complete/Partial/Discard), ensure the window grows
+            # enough for the footer (Save/Cancel) to remain visible.
+            req_h = self.window.winfo_reqheight()
+
+            new_w = max(cur_w, min_w)
+            new_h = max(cur_h, min_h, req_h)
+
+            self.window.geometry(f"{new_w}x{new_h}")
+        except Exception:
+            pass
+
         # Note: Density sampling section is always visible (main data entry fields)
+
 
     def _get_status_frame(self) -> tk.Widget:
         """Get the status section frame for pack ordering"""
@@ -1159,6 +1420,12 @@ class ObserverOverlay:
                 )
                 return
 
+        # Update the sample counter display after successful save
+        try:
+            self._update_sample_count()
+        except Exception:
+            pass
+
         # If the CMDR completed the slice, unlock so the next save starts a new splice sample.
         try:
             if note.slice_status == SliceStatus.COMPLETE:
@@ -1166,8 +1433,9 @@ class ObserverOverlay:
         except Exception:
             pass
 
-        # Close overlay
-        self.hide()
+        # Don't close overlay after save - let user decide when to close
+        # User can press ESC or click X to close manually
+        # self.hide()  # Commented out - window stays open after save
 
     def _on_cancel(self):
         """Handle cancel button click"""
@@ -1184,6 +1452,15 @@ class ObserverOverlay:
 
         # Discard requires notes
         status = self._slice_status_var.get()
+
+        # Preserve current window size so toggling status doesn't auto-shrink and hide the footer buttons
+        try:
+            cur_w = self.window.winfo_width()
+            cur_h = self.window.winfo_height()
+        except Exception:
+            cur_w = getattr(self, "_base_width", 480)
+            cur_h = getattr(self, "_base_height", 728)
+
         notes = self._notes_widget.get("1.0", "end").strip()
 
         if status == SliceStatus.DISCARD.value and not notes:

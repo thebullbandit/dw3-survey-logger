@@ -59,6 +59,7 @@ class Earth2View:
         self.on_rescan: Optional[Callable] = None
         self.on_import_journals: Optional[Callable] = None
         self.on_options: Optional[Callable] = None
+        self.on_journal_folder: Optional[Callable] = None
         self.on_about: Optional[Callable] = None
         self.on_options: Optional[Callable] = None
         self.on_about: Optional[Callable] = None
@@ -78,6 +79,7 @@ class Earth2View:
             "BG_FIELD": self.config.get("BG_FIELD", "#1a1a28"),
             "TEXT": self.config.get("TEXT", "#e0e0ff"),
             "MUTED": self.config.get("MUTED", "#6a6a8a"),
+            "TEXT_DIM": self.config.get("TEXT_DIM", "#b8b8d8"),
             "BORDER_OUTER": self.config.get("BORDER_OUTER", "#2a2a3f"),
             "BORDER_INNER": self.config.get("BORDER_INNER", "#1f1f2f"),
             "ORANGE": self.config.get("ORANGE", "#ff8833"),
@@ -86,6 +88,7 @@ class Earth2View:
             "RED": self.config.get("RED", "#ff4444"),
             "LED_ACTIVE": self.config.get("LED_ACTIVE", "#00ff88"),
             "LED_IDLE": self.config.get("LED_IDLE", "#888888"),
+            
         }
 
     def _setup_fonts(self):
@@ -163,7 +166,7 @@ class Earth2View:
         screen_height = self.root.winfo_screenheight()
         
         
-        window_width = 900
+        window_width = 650  # Reduced from 750 - very compact layout
         window_height = min(640, int(screen_height * 0.78))  # compact default, still tall enough
         
         # Set window size and position (centered)
@@ -177,7 +180,7 @@ class Earth2View:
             scale = float(self.root.tk.call("tk", "scaling"))
         except Exception:
             scale = 1.0
-        min_w = int(680 * scale)
+        min_w = int(580 * scale)  # Reduced from 680 for more compact layout
         min_h = int(440 * scale)
         self.root.minsize(min_w, min_h)
         
@@ -548,11 +551,11 @@ class Earth2View:
     
     def _build_header(self):
         """Build header with title and LED indicator"""
-        header = tk.Frame(self.root, bg=self.colors["BG_PANEL"], height=60)
+        header = tk.Frame(self.root, bg=self.colors["BG_PANEL"], height=50)  # Reduced from 60
         header.pack(fill="x", padx=10, pady=(10, 5))
         header.pack_propagate(False)
         
-        # Title
+        # Title on the left
         title_label = tk.Label(
             header,
             text=f"{self.config['APP_NAME']} v{self.config['VERSION']}",
@@ -560,11 +563,11 @@ class Earth2View:
             fg=self.colors["ORANGE"],
             bg=self.colors["BG_PANEL"]
         )
-        title_label.pack(side="left", padx=20, pady=10)
+        title_label.pack(side="left", padx=12, pady=8)  # Reduced padding
         
-        # LED indicator
+        # LED indicator and status on the right
         led_frame = tk.Frame(header, bg=self.colors["BG_PANEL"])
-        led_frame.pack(side="right", padx=20)
+        led_frame.pack(side="right", padx=12)  # Reduced padding
         
         # Quick-link: DW3 community radio (opens in default browser)
         lbl_radio = tk.Label(
@@ -601,23 +604,23 @@ class Earth2View:
         self.widgets["led_dot"] = led_dot
         self.widgets["lbl_radio"] = lbl_radio
         self.widgets["lbl_feed"] = lbl_feed
-        self.widgets["lbl_radio"] = lbl_radio
     
     def _build_hud_strip(self, parent: tk.Widget):
         """
         Build a compact HUD strip (replaces the tall STATUS panel).
         Keeps the same widget keys the presenter expects:
-          - lbl_scan_status, lbl_journal, lbl_cmdr, lbl_signal, lbl_skipped
+          - lbl_scan_status, lbl_journal, lbl_signal, lbl_skipped
+          - lbl_cmdr is now on the button line (not in HUD)
         """
         hud = tk.Frame(parent, bg=self.colors["BG_PANEL"], bd=1, relief="solid")
         self.widgets["hud_strip"] = hud
 
-        # Layout: 3 rows x 3 pairs
-        # Row 0: SCAN, JOURNAL, CMDR
+        # Layout: 3 rows x 2 pairs (CMDR moved to header)
+        # Row 0: SCAN, JOURNAL
         # Row 1: TARGET (full-width line)
-        # Row 2: SIGNAL, SKIPPED, hint
+        # Row 2: SIGNAL, SKIPPED
 
-        for i in range(6):
+        for i in range(4):
             hud.grid_columnconfigure(i, weight=1)
 
         def add_field(row, col, label_text, key):
@@ -627,7 +630,7 @@ class Earth2View:
                 font=("Consolas", 9),
                 fg=self.colors["MUTED"],
                 bg=self.colors["BG_PANEL"],
-            ).grid(row=row, column=col, sticky="e", padx=(10, 4), pady=6)
+            ).grid(row=row, column=col, sticky="e", padx=(8, 3), pady=4)  # Reduced padding
 
             val = tk.Label(
                 hud,
@@ -637,13 +640,13 @@ class Earth2View:
                 bg=self.colors["BG_PANEL"],
                 anchor="w",
             )
-            val.grid(row=row, column=col + 1, sticky="w", padx=(0, 14), pady=6)
+            val.grid(row=row, column=col + 1, sticky="w", padx=(0, 10), pady=4)  # Reduced padding
             self.widgets[key] = val
 
         # Row 0
         add_field(0, 0, "SCAN:", "lbl_scan_status")
         add_field(0, 2, "JOURNAL:", "lbl_journal")
-        add_field(0, 4, "CMDR:", "lbl_cmdr")
+        # CMDR removed from here - now in header
 
         # Row 1: Target line (where your red line is)
         tk.Label(
@@ -652,7 +655,7 @@ class Earth2View:
             font=("Consolas", 9),
             fg=self.colors["MUTED"],
             bg=self.colors["BG_PANEL"],
-        ).grid(row=1, column=0, sticky="e", padx=(10, 4), pady=(0, 6))
+        ).grid(row=1, column=0, sticky="e", padx=(8, 3), pady=(0, 4))  # Reduced padding
 
         lbl_target_line = tk.Label(
             hud,
@@ -662,7 +665,7 @@ class Earth2View:
             bg=self.colors["BG_PANEL"],
             anchor="w",
         )
-        lbl_target_line.grid(row=1, column=1, columnspan=5, sticky="ew", padx=(0, 12), pady=(0, 6))
+        lbl_target_line.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 10), pady=(0, 4))  # Reduced padding
         self.widgets["lbl_target_line"] = lbl_target_line
 
         # Row 2
@@ -1177,7 +1180,28 @@ class Earth2View:
     def _build_controls(self):
         """Build control buttons"""
         control_frame = tk.Frame(self.root, bg=self.colors["BG"])
-        control_frame.pack(fill="x", padx=10, pady=5)
+        control_frame.pack(fill="x", padx=10, pady=3)  # Reduced vertical padding
+
+        # CMDR label on the left
+        cmdr_container = tk.Frame(control_frame, bg=self.colors["BG"])
+        cmdr_container.pack(side="left", padx=3)  # Reduced padding
+        
+        tk.Label(
+            cmdr_container,
+            text="CMDR:",
+            font=("Consolas", 9),
+            fg=self.colors["MUTED"],
+            bg=self.colors["BG"],
+        ).pack(side="left", padx=(0, 3))  # Reduced padding
+        
+        lbl_cmdr = tk.Label(
+            cmdr_container,
+            text="-",
+            font=("Consolas", 9),
+            fg=self.colors["TEXT"],
+            bg=self.colors["BG"],
+        )
+        lbl_cmdr.pack(side="left")
 
         # Export dropdown (consolidates CSV/DB/XLSX into one button)
         export_btn = tk.Menubutton(
@@ -1208,29 +1232,40 @@ class Earth2View:
         export_menu.add_command(label="Density XLSX", command=self._on_export_density_xlsx_clicked)
 
         export_btn.config(menu=export_menu)
-        export_btn.pack(side="left", padx=5)
-        btn_rescan = tk.Button(
+        export_btn.pack(side="left", padx=3)  # Reduced padding
+
+        # Options dropdown (consolidates settings/import/backup into one button)
+        options_btn = tk.Menubutton(
             control_frame,
-            text="Rescan Current Journal",
+            text="Options ▾",
             font=self.fonts["UI"],
             bg=self.colors["BG_PANEL"],
             fg=self.colors["TEXT"],
-            command=self._on_rescan_clicked
+            activebackground=self.colors["BG_PANEL"],
+            activeforeground=self.colors["TEXT"],
+            relief="raised",
+            bd=1,
+            direction="below"
         )
-        btn_rescan.pack(side="left", padx=5)
 
-        btn_import = tk.Button(
-            control_frame,
-            text="Import All Journals",
-            font=self.fonts["UI"],
-            bg=self.colors["ORANGE"],
-            fg="#000000",
-            command=self._on_import_journals_clicked,
-            cursor="hand2"
+        options_menu = tk.Menu(
+            options_btn,
+            tearoff=0,
+            bg=self.colors["BG_PANEL"],
+            fg=self.colors["TEXT"],
+            activebackground=self.colors["ORANGE"],
+            activeforeground="#000000"
         )
-        btn_import.pack(side="left", padx=5)
+        options_menu.add_command(label="Hotkey Settings...", command=self._on_options_clicked)
+        options_menu.add_command(label="Journal Folder...", command=self._on_journal_folder_clicked)
+        options_menu.add_command(label="Import All Journals", command=self._on_import_journals_clicked)
+        options_menu.add_separator()
+        options_menu.add_command(label="Backup Database", command=self._on_export_db_clicked)
 
-        # Push utility buttons to the right
+        options_btn.config(menu=options_menu)
+        options_btn.pack(side="left", padx=3)  # Reduced padding
+
+        # Push buttons to the right
         spacer = tk.Frame(control_frame, bg=self.colors["BG"])
         spacer.pack(side="left", expand=True, fill="x")
 
@@ -1243,32 +1278,17 @@ class Earth2View:
             command=self._on_about_clicked,
             cursor="hand2"
         )
-        btn_about.pack(side="right", padx=5)
-
-        btn_options = tk.Button(
-            control_frame,
-            text="Options",
-            font=self.fonts["UI"],
-            bg=self.colors["BG_PANEL"],
-            fg=self.colors["TEXT"],
-            command=self._on_options_clicked,
-            cursor="hand2"
-        )
-        btn_options.pack(side="right", padx=5)
-
+        btn_about.pack(side="right", padx=3)  # Reduced padding
 
         # Flat button styling (no 3D relief)
         self._style_button(export_btn)
-        self._style_button(btn_rescan)
-        self._style_button(btn_import, accent=True)
-        self._style_button(btn_options)
+        self._style_button(options_btn)
         self._style_button(btn_about)
+        
         self.widgets["btn_export_menu"] = export_btn
-        self.widgets["btn_rescan"] = btn_rescan
-        self.widgets["btn_import"] = btn_import
-        self.widgets["btn_options"] = btn_options
+        self.widgets["btn_options_menu"] = options_btn
         self.widgets["btn_about"] = btn_about
-
+        self.widgets["lbl_cmdr"] = lbl_cmdr  # CMDR on button line
     
     def _build_footer(self):
         """Build footer with summary statistics"""
@@ -2042,6 +2062,126 @@ class Earth2View:
 
             return payload
         return None
+    
+    def show_hotkey_dialog(self) -> str | None:
+        """
+        Show a simplified dialog for hotkey settings only.
+        
+        Returns the new hotkey string or None if cancelled.
+        """
+        current_hotkey = str(self.config.get("HOTKEY_OBSERVER", "") or self.config.get("HOTKEY_LABEL", "") or "Ctrl+Alt+O")
+        
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Hotkey Settings")
+        dlg.configure(bg=self.colors["BG_PANEL"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+        self._apply_icon_to_window(dlg)
+
+        # Main container with padding
+        main_frame = tk.Frame(dlg, bg=self.colors["BG_PANEL"])
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Title
+        tk.Label(
+            main_frame,
+            text="Observer Hotkey",
+            font=self.fonts["UI_SMALL_BOLD"],
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Hotkey entry
+        var_hot = tk.StringVar(value=current_hotkey)
+        entry_hot = tk.Entry(
+            main_frame,
+            textvariable=var_hot,
+            width=30,
+            font=("Consolas", 10),
+            bg=self.colors["BG_FIELD"],
+            fg=self.colors["TEXT"],
+            insertbackground=self.colors["TEXT"],
+            relief="solid",
+            bd=1
+        )
+        entry_hot.pack(fill="x", pady=(0, 8))
+        entry_hot.focus_set()
+
+        # Help text
+        tk.Label(
+            main_frame,
+            text="Examples: Ctrl+Alt+O, Ctrl+Shift+F5, Alt+H\nUse Ctrl/Alt/Shift with a key or F1-F12",
+            font=("Consolas", 8),
+            fg=self.colors["TEXT_DIM"],
+            bg=self.colors["BG_PANEL"],
+            justify="left"
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Warning about restart
+        tk.Label(
+            main_frame,
+            text="⚠ Application restart required for changes to take effect",
+            font=("Consolas", 8, "bold"),
+            fg=self.colors["ORANGE"],
+            bg=self.colors["BG_PANEL"]
+        ).pack(anchor="w", pady=(0, 16))
+
+        result = {"hotkey": None}
+
+        def on_save():
+            hotkey = var_hot.get().strip()
+            if hotkey:
+                result["hotkey"] = hotkey
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+
+        # Buttons
+        btn_frame = tk.Frame(main_frame, bg=self.colors["BG_PANEL"])
+        btn_frame.pack(fill="x", pady=(0, 0))
+
+        tk.Button(
+            btn_frame,
+            text="Save",
+            font=("Consolas", 9, "bold"),
+            bg=self.colors["ORANGE"],
+            fg="#000000",
+            activebackground=self.colors["ORANGE_DIM"],
+            command=on_save,
+            width=12
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame,
+            text="Cancel",
+            font=("Consolas", 9),
+            bg=self.colors["BG_PANEL"],
+            fg=self.colors["TEXT"],
+            command=on_cancel,
+            width=12
+        ).pack(side="left")
+
+        # Set geometry after widgets are created
+        dlg.update_idletasks()
+        
+        # Calculate position to center over parent
+        self.root.update_idletasks()
+        x = self.root.winfo_rootx() + 150
+        y = self.root.winfo_rooty() + 150
+        
+        # Set fixed size - use larger minimum to ensure all content shows
+        dlg.geometry(f"460x260+{x}+{y}")
+        dlg.minsize(460, 260)
+        dlg.resizable(False, False)
+
+        # Bind Enter to save, Escape to cancel
+        entry_hot.bind("<Return>", lambda e: on_save())
+        dlg.bind("<Escape>", lambda e: on_cancel())
+
+        dlg.wait_window()
+        return result.get("hotkey")
+
     def show_about_dialog(self, about_text: str, copy_text: str | None = None):
         """Show About dialog. If copy_text is provided, a 'Copy diagnostics' button is shown."""
         dlg = tk.Toplevel(self.root)
@@ -2144,6 +2284,11 @@ class Earth2View:
         """Handle import journals button click"""
         if self.on_import_journals:
             self.on_import_journals()
+
+    def _on_journal_folder_clicked(self):
+        """Handle journal folder option click"""
+        if self.on_journal_folder:
+            self.on_journal_folder()
 
     def _on_options_clicked(self):
         """Handle Options button click"""

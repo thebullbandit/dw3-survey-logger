@@ -147,16 +147,18 @@ def export_density_worksheet_from_notes(
         # C System Count: CMDR-entered from NAV (required by DW3). Copy exactly as stored.
         ws.cell(r, 3).value = d.get("system_count")
 
-        # D Corrected n: only if CMDR entered it in overlay
-        if d.get("corrected_n") is not None:
-            ws.cell(r, 4).value = d.get("corrected_n")          # D
+        # D Corrected n: Use manual value if provided, otherwise calculate as system_count + 1
+        corrected = d.get("corrected_n")
+        if corrected is None:
+            system_count = d.get("system_count")
+            corrected = (system_count + 1) if system_count is not None else None
+        if corrected is not None:
+            ws.cell(r, 4).value = corrected
 
         ws.cell(r, 5).value = d.get("max_distance")             # E Max Distance
 
-        # StarPos mapping: Journal provides (x, y, z) where z is vertical (galactic height).
-        # Worksheet columns are: X (horizontal), Z (vertical), Y (horizontal).
-        # This is a DIRECT mapping: journal_x→X, journal_z→Z, journal_y→Y
-        # Both journal and worksheet use Z as the vertical axis.
+        # StarPos mapping: Journal provides (x, y, z)
+        # Worksheet columns now ordered as: X, Y, Z (Y and Z swapped per user request)
         sp = d.get("star_pos") or (None, None, None)
         try:
             x, y, z = sp
@@ -164,8 +166,8 @@ def export_density_worksheet_from_notes(
             x = y = z = None
 
         ws.cell(r, 7).value = x                                 # G X
-        ws.cell(r, 8).value = z                                 # H Z (vertical - from journal's Z which is vertical)
-        ws.cell(r, 9).value = y                                 # I Y (horizontal - from journal's Y)
+        ws.cell(r, 8).value = y                                 # H Y (swapped - was Z)
+        ws.cell(r, 9).value = z                                 # I Z (swapped - was Y)
 
     # --------------------------------------------------------------------
     # Output filename normalization (DW3-friendly)

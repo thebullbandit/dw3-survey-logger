@@ -1,18 +1,15 @@
-# DW3 Survey Logger v0.9.12
+# DW3 Survey Logger v0.9.13
 
 ## Project Status
 
 **This is still under active development.**  
-It was created in 8 days to support **DW3 expeditions**.
+It was created to support **DW3 expeditions**.
 
 https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734/
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Known Issues (v0.9.12)
-
-The following issues are **known and confirmed** in version **0.9.12**.  
-They do **not affect collected data integrity**, but may impact usability.
+## Known Issues (v0.9.13)
 
 None
 
@@ -20,7 +17,7 @@ None
 
 ## Overview
 
-DW3 Survey Logger is for commanders participating in **DW3 (Deep Space Waypoint 3)**.  
+DW3 Survey Logger is for commanders participating in **DW3 (Distant Worlds Expedition 3)**.  
 It helps collect, structure, validate and export survey data from *Elite Dangerous* in a consistent way.
 
 The logger combines:
@@ -28,7 +25,7 @@ The logger combines:
 - Human observations entered during flight
 - Structured storage in a local SQLite database
 
-The result is **clean, comparable data** that DW3 teams can use without manual cleanup.
+The result is clean and comparable data that DW3 teams can use without manual cleanup.
 
 ---
 
@@ -183,12 +180,16 @@ Files are named clearly so coordinators can identify them without opening the fi
 
 Screenshot: `assets/options_screen.png`
 
-The options screen allows you to:
+The options menu (accessed via the Options dropdown button) allows you to:
+- **Hotkey Settings** - Configure observer overlay hotkey
+- **Import All Journals** - Bulk import historical journal data
+- **Backup Database** - Quick database backup export
+
+The main Options dialog lets you:
 - Select journal and output folders
-- Adjust hotkeys
+- Adjust hotkey combinations
 
-
-Most settings persist across restarts.
+Settings persist across restarts.
 
 ---
 
@@ -225,10 +226,9 @@ python main.py
 
 ## Current Limitations
 
-- UI is "functional" but not final
 - Some validation is still evolving
 
-These limitations are expected at this stage of development.
+This limitation is expected at this stage of development.
 
 ---
 
@@ -245,20 +245,29 @@ These limitations are expected at this stage of development.
 
 ### Future Ideas
 - Session summaries and statistics
-- Improved Z-target guidance
 - Guided workflows for new commanders
 
 ---
 
 ## Patch Notes
 
+### v0.9.13
+- Fixed: Sample index counter bug - Sample runs now correctly increment (1, 2, 3...) instead of staying at 1
+- Fixed: Excel coordinate order - Columns now ordered as X-Y-Z instead of X-Z-Y for consistency
+- Improved: Observation window workflow - Window no longer auto-closes after saving, allowing rapid data entry
+- Improved: Compact UI design - Main window reduced to 650px width (from 900px), minimum 580px
+- Improved: Observation window - Reduced to 480x380px with collapsible NOTES section that dynamically resizes
+- Improved: UI organization - CMDR name moved to button line, new Options dropdown menu consolidating settings
+- Improved: Reduced padding - Tightened spacing throughout for more compact layout
+- Changed: Removed Rescan button - Moved to Options menu to reduce clutter
+- Changed: Moved Import Journals - Now in Options dropdown menu
+- Added: Backup Database option - Quick access in Options menu
+
 ### v0.9.12
 - Fixed: Observer overlay now refreshes context when hotkey pressed after jumping
 - Improved: Next Sample Location panel with clearer language and direction arrows
 - Added: Export All option with folder picker for CSV + DB + XLSX
 - Added: Folder selection for individual Density XLSX export
-- Changed: Display shows z-bin values and simplified distance indicators
-- Full backward compatibility with v0.9.9-0.9.10 data maintained
 
 ---
 
