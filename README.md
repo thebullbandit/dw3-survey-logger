@@ -40,7 +40,7 @@ Each section will soon have screenshots to help new users orient themselves.
 
 ### 1. Main Observation Screen
 
-![Main Observation Screen](`assets/main_observation_screen.png`)
+![Main Observation](screenshots/main_observation_screen.png)
 
 This is the primary workspace during flight.
 
@@ -54,8 +54,6 @@ Here you:
 ---
 
 ### 2. Session & Sample Tracking
-
-![Session Sample Tracking](`assets/session_sample_tracking.png`)
 
 Each expedition run is organized into:
 - **Sessions** (a continuous exploration period)
@@ -72,7 +70,7 @@ This ensures consistency across commanders and across time.
 
 ### 3. Journal Monitoring
 
-![Journal Monitor](`assets/journal_monitor.png`)
+![Journal Monitor](screenshots/journal_monitor.png)
 
 The application continuously watches your **Elite Dangerous journal folder**.
 
@@ -101,7 +99,7 @@ The overlay refreshes context automatically on every hotkey press, including aft
 
 ### 5. ELW Scans & Activity Tier (Informational)
 
-![Elw Activity Tier](`assets/elw_activity_tier.png`)
+![Elw Activity Tier](screenshots/elw_activity_tier.png)
 
 When scanning **Earth-Like Worlds (ELWs)**, the application displays a small activity tier indicator.
 
@@ -140,7 +138,7 @@ Community feedback will guide that decision.
 
 ### 6. Data Storage (SQLite)
 
-Screenshot: `assets/database_overview.png`
+![Database](screenshots/database_overview.png)
 
 All collected data is stored locally in a **SQLite database**.
 
@@ -156,7 +154,7 @@ Both raw and processed values are preserved.
 
 ### 7. Export to DW3 Worksheets
 
-Screenshot: `assets/excel_export.png`
+![Excel export](screenshots/excel_export.png) (Not a real sample!)
 
 Completed samples can be exported to **DW3-compatible Excel worksheets**.
 
@@ -178,7 +176,7 @@ Files are named clearly so coordinators can identify them without opening the fi
 
 ### 8. Options & Configuration
 
-Screenshot: `assets/options_screen.png`
+![](screenshots/export_button.png) ![](screenshots/options_screen.png)
 
 The options menu (accessed via the Options dropdown button) allows you to:
 - **Hotkey Settings** - Configure observer overlay hotkey
