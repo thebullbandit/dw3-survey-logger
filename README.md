@@ -1,3 +1,8 @@
+# DW3 Survey Logger
+
+[![Version](https://img.shields.io/github/v/release/thebullbandit/dw3-survey-logger)](https://github.com/thebullbandit/dw3-survey-logger/releases)
+[![License](https://img.shields.io/github/license/thebullbandit/dw3-survey-logger)](LICENSE)
+
 # DW3 Survey Logger v0.9.14
 
 ## Project Status
@@ -256,7 +261,7 @@ This limitation is expected at this stage of development.
 - Fixed: Removed stale "Jump ~XX LY upward" line from Next Sample Location panel
 - Fixed: Density Excel export now writes the actual CMDR name to the sheet instead of using the template default
 - Improved: Observation window is now scrollable and resizable - users can shrink the window without losing the Save/Cancel buttons
-- Improved: Removed 20-system-per-sample limit - users can now scan as many systems as they want per sample
+- Improved: Removed 20 system sample limit, users can now scan as many systems as they want per sample
 - Added: Reset Observer Progress option in the Options menu (soft-reset, data preserved in database)
 - Added: Cache cleanup on startup to prevent stale bytecode issues after updates
 
