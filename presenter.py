@@ -10,9 +10,12 @@ Handles UI events and updates the view based on model state.
 # IMPORTS
 # ============================================================================
 
+import logging
 import time
 import threading
 from typing import Dict, Any
+
+logger = logging.getLogger("dw3.presenter")
 
 
 # ============================================================================
@@ -21,11 +24,11 @@ from typing import Dict, Any
 
 class Earth2Presenter:
     """Presenter layer - coordinates between Model and View"""
-    
+
     def __init__(self, model, view, config: Dict[str, Any], journal_monitor=None, observer_storage=None):
         """
         Initialize the presenter
-        
+
         Args:
             model: Earth2Model instance
             view: Earth2View instance
@@ -36,7 +39,7 @@ class Earth2Presenter:
         self.view = view
         self.config = config
         self.journal_monitor = journal_monitor
-        
+
         self.observer_storage = observer_storage
 
         # Connect view callbacks to presenter methods
@@ -44,12 +47,14 @@ class Earth2Presenter:
         self.view.on_export_db = self.handle_export_db
         self.view.on_export_density_xlsx = self.handle_export_density_xlsx
         self.view.on_export_all = self.handle_export_all
+        self.view.on_export_diagnostics = self.handle_export_diagnostics
         self.view.on_rescan = self.handle_rescan
         self.view.on_import_journals = self.handle_import_journals
         self.view.on_options = self.handle_options
         self.view.on_journal_folder = self.handle_journal_folder
         self.view.on_about = self.handle_about
-        
+        self.view.on_reset_observer_progress = self.handle_reset_observer_progress
+
         # UI refresh control
         self._stop_refresh = threading.Event()
         # IMPORTANT: Tkinter is not thread-safe. All widget updates must run on
@@ -57,7 +62,7 @@ class Earth2Presenter:
         # We therefore schedule refreshes using root.after(...) instead of a
         # background "UI thread".
         self._refresh_after_id = None
-    
+
     def start(self):
         """Start the presenter (begins UI refresh loop)"""
         # Load initial data
@@ -66,7 +71,7 @@ class Earth2Presenter:
         # Start UI refresh loop on the Tk main thread
         self._stop_refresh.clear()
         self._schedule_refresh()
-    
+
     def stop(self):
         """Stop the presenter"""
         self._stop_refresh.set()
@@ -75,11 +80,12 @@ class Earth2Presenter:
         try:
             if self._refresh_after_id is not None:
                 self.view.root.after_cancel(self._refresh_after_id)
-        except Exception:
+        except Exception as e:
+            logger.debug("after_cancel failed: %s", e)
             pass
         finally:
             self._refresh_after_id = None
-    
+
 
 
     def notify_observer_context_changed(self):
@@ -95,18 +101,20 @@ class Earth2Presenter:
             def _emit():
                 try:
                     root.event_generate("<<ObserverContextChanged>>", when="tail")
-                except Exception:
+                except Exception as e:
+                    logger.debug("event_generate ObserverContextChanged failed: %s", e)
                     pass
 
             # Ensure we're on Tk main thread
             root.after(0, _emit)
-        except Exception:
+        except Exception as e:
+            logger.debug("notify_observer_context_changed failed: %s", e)
             pass
 
     # ========================================================================
     # UI REFRESH LOOP
     # ========================================================================
-    
+
     def _schedule_refresh(self):
         """Schedule the next UI refresh via Tk's event loop (main thread)."""
         if self._stop_refresh.is_set():
@@ -115,7 +123,7 @@ class Earth2Presenter:
         try:
             self._refresh_ui()
         except Exception as e:
-            print(f"[PRESENTER ERROR] Refresh loop: {e}")
+            logger.error("Refresh loop: %s", e, exc_info=True)
 
         # Adaptive refresh rate (in milliseconds)
         last_log_time = self.model.get_status("last_log_time") or 0
@@ -129,47 +137,47 @@ class Earth2Presenter:
             self._refresh_after_id = self.view.root.after(delay_ms, self._schedule_refresh)
         except Exception as e:
             # If the window is already destroyed, after() will throw.
-            print(f"[PRESENTER ERROR] after(): {e}")
+            logger.error("after(): %s", e)
             self._refresh_after_id = None
-    
+
     def _refresh_ui(self):
         """Refresh all UI components from model state"""
         try:
             # Get current state from model
             stats = self.model.get_stats()
             status = self.model.get_status()
-            
+
             # Update feed status and LED
             self._update_feed_status(status)
-            
+
             # Update status panel
             self._update_status_panel(status)
-            
+
             # Update target lock
             self._update_target_lock(status)
 
             # Update statistics
             self._update_statistics(stats, status)
-            
+
             # Update COMMS
             comms_messages = self.model.get_comms_messages()
             self.view.update_comms(comms_messages)
-            
+
             # Update footer
             self.view.update_footer(
                 stats.get("total_all", 0),
                 stats.get("total_elw", 0),
                 stats.get("total_terraformable", 0)
             )
-            
+
         except Exception as e:
-            print(f"[PRESENTER ERROR] UI refresh: {e}")
-    
+            logger.error("UI refresh: %s", e, exc_info=True)
+
     def _update_feed_status(self, status: Dict[str, Any]):
         """Update feed status and LED indicator"""
         # Determine feed status text and LED color
         scan_status = status.get("scan_status", "")
-        
+
         if "ACTIVE" in scan_status or "LOGGING" in scan_status:
             feed_text = "ACTIVE"
             led_color = self.view.colors["LED_ACTIVE"]
@@ -179,25 +187,25 @@ class Earth2Presenter:
         else:
             feed_text = scan_status or "IDLE"
             led_color = self.view.colors["LED_IDLE"]
-        
+
         self.view.update_feed_status(feed_text, led_color)
-    
+
     def _update_status_panel(self, status: Dict[str, Any]):
         """Update status panel fields"""
         # Prepare status data for view
         scan_status = (status.get("scan_status") or "").strip() or "NO SIGNAL"
-        
+
         journal_name = (status.get("current_journal") or "").strip()
         journal_mode = (status.get("journal_mode") or "").strip()
         if journal_name:
             journal_text = f"{journal_name}  ({journal_mode})" if journal_mode else journal_name
         else:
             journal_text = "-"
-        
+
         cmdr = (status.get("cmdr_name") or "").strip() or "-"
         signal = (status.get("last_signal_local") or "").strip() or "-"
         skipped = str(status.get("events_skipped", 0))
-        
+
         status_data = {
             "scan_status": scan_status,
             "journal": journal_text,
@@ -205,9 +213,9 @@ class Earth2Presenter:
             "signal": signal,
             "skipped": skipped,
         }
-        
+
         self.view.update_status_panel(status_data)
-    
+
     def _update_target_lock(self, status: Dict[str, Any]):
         """Update target lock panel"""
         last_system = (status.get("last_system") or "").strip()
@@ -217,15 +225,15 @@ class Earth2Presenter:
         last_worth = (status.get("last_worth") or "").strip()
         last_reason = (status.get("last_reason") or "").strip()
         last_inara = (status.get("last_inara") or "").strip()
-        
+
         # Get similarity data if available
         similarity_score = status.get("last_similarity_score", -1)
         similarity_breakdown = status.get("last_similarity_breakdown", {})
-        
+
         # Get Goldilocks data if available
         goldilocks_score = status.get("last_goldilocks_score", -1)
         goldilocks_breakdown = status.get("last_goldilocks_breakdown", {})
-        
+
         # Determine reason text
         if last_reason:
             reason_text = last_reason
@@ -233,7 +241,7 @@ class Earth2Presenter:
             reason_text = "Standing by..."
         else:
             reason_text = "-"
-        
+
         target_data = {
             "system": last_system if last_system else "-",
             "body": last_body if last_body else "-",
@@ -247,35 +255,35 @@ class Earth2Presenter:
             "goldilocks_score": goldilocks_score,
             "goldilocks_breakdown": goldilocks_breakdown,
         }
-        
+
         self.view.update_target_lock(target_data)
-    
+
     def _update_statistics(self, stats: Dict[str, int], status: Dict[str, Any]):
         """Update statistics panel"""
         # Session duration
         hours, minutes = self.model.get_session_duration()
         session_time = f"Session: {hours}h {minutes}m"
-        
+
         # Session counts
         sess_candidates = status.get("session_candidates", 0)
         sess_elw = status.get("session_elw", 0)
         sess_tf = status.get("session_terraformable", 0)
         sess_systems = status.get("session_systems_count", 0)
         sess_scanned = status.get("session_bodies_scanned", 0)
-        
+
         session_candidates_text = f"Candidates: {sess_candidates} ({sess_elw} ELW, {sess_tf} TF)"
         session_systems_text = f"Systems: {sess_systems}"
         session_scanned_text = f"Bodies Scanned: {sess_scanned}"
-        
+
         # Session rate
         rate = self.model.get_session_rate()
         session_rate_text = f"Rate: {rate:.1f}/hour"
-        
+
         # Get rating distributions
         session_ratings = self.model.get_session_ratings()
         alltime_ratings = self.model.load_rating_distribution()
         alltime_total_candidates = sum(alltime_ratings.values()) if isinstance(alltime_ratings, dict) else 0
-        
+
         stats_data = {
             "session_time": session_time,
             "session_candidates": session_candidates_text,
@@ -287,13 +295,13 @@ class Earth2Presenter:
             "session_candidate_count": sess_candidates,
             "alltime_candidate_count": alltime_total_candidates,
         }
-        
+
         self.view.update_statistics(stats_data)
 
     # ========================================================================
     # EVENT HANDLERS - Called from View
     # ========================================================================
-    
+
     def handle_export_csv(self):
         """Handle CSV export request"""
         try:
@@ -301,9 +309,9 @@ class Earth2Presenter:
             from datetime import datetime
             import threading
             import os
-            
+
             self.model.add_comms_message("[SYSTEM] Starting CSV export...")
-            
+
             def export_thread():
                 try:
                     # Determine export directory (Options can override)
@@ -317,28 +325,26 @@ class Earth2Presenter:
                     # Timestamp (no seconds)
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
                     timestamped_path = export_dir / f"DW3_Earth2_Candidates_{timestamp}.csv"
-                    
+
                     # Ensure directory exists
                     export_dir.mkdir(parents=True, exist_ok=True)
-                    
+
                     # Export using database method
                     self.model.db.export_to_csv(timestamped_path)
-                    
+
                     self.model.add_comms_message(f"[INFO] CSV saved: {timestamped_path.name}")
                     self.model.add_comms_message(f"[INFO] Full path: {timestamped_path}")
-                    
+
                 except Exception as e:
                     self.model.add_comms_message(f"[ERROR] CSV export failed: {e}")
-                    print(f"[PRESENTER ERROR] Export CSV: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
+                    logger.error("Export CSV: %s", e, exc_info=True)
+
             # Run in background thread
             thread = threading.Thread(target=export_thread, daemon=True)
             thread.start()
-            
+
         except Exception as e:
-            print(f"[PRESENTER ERROR] Export CSV: {e}")
+            logger.error("Export CSV: %s", e, exc_info=True)
 
     def handle_export_db(self):
         """Handle database export request"""
@@ -380,17 +386,15 @@ class Earth2Presenter:
 
                 except Exception as e:
                     self.model.add_comms_message("[ERROR] Database backup failed. See logs for details.")
-                    print(f"[PRESENTER ERROR] Export DB: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.error("Export DB: %s", e, exc_info=True)
 
             # Run in background thread
             thread = threading.Thread(target=export_thread, daemon=True)
             thread.start()
 
         except Exception as e:
-            print(f"[PRESENTER ERROR] Export DB (outer): {e}")
-    
+            logger.error("Export DB (outer): %s", e, exc_info=True)
+
     def handle_export_all(self):
         """Handle export all formats (CSV + DB + XLSX) with folder picker"""
         try:
@@ -399,7 +403,7 @@ class Earth2Presenter:
             import threading
             import shutil
             from tkinter import filedialog
-            
+
             # Ask user to select export folder
             initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
             export_dir = filedialog.askdirectory(
@@ -407,22 +411,22 @@ class Earth2Presenter:
                 initialdir=initial_dir,
                 parent=self.view.root
             )
-            
+
             if not export_dir:
                 # User cancelled
                 return
-            
+
             export_dir = Path(export_dir)
-            
+
             # Save this directory for next time
             self.config["EXPORT_DIR"] = str(export_dir)
-            
+
             self.model.add_comms_message(f"[SYSTEM] Exporting all formats to: {export_dir}")
-            
+
             def export_thread():
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 export_count = 0
-                
+
                 # 1. Export CSV
                 try:
                     csv_path = export_dir / f"DW3_Earth2_Candidates_{timestamp}.csv"
@@ -431,7 +435,7 @@ class Earth2Presenter:
                     export_count += 1
                 except Exception as e:
                     self.model.add_comms_message(f"[✗] CSV export failed: {e}")
-                
+
                 # 2. Export Database Backup
                 try:
                     db_path_str = self.config.get("DB_PATH", "")
@@ -449,46 +453,47 @@ class Earth2Presenter:
                         self.model.add_comms_message("[✗] Database path not configured")
                 except Exception as e:
                     self.model.add_comms_message(f"[✗] Database backup failed: {e}")
-                
+
                 # 3. Export Density XLSX (multiple files, one per sample)
                 try:
                     if not self.observer_storage:
                         self.model.add_comms_message("[✗] Observer storage not available (XLSX skipped)")
                     else:
-                        template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
-                        
-                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file
-                        
+                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
+                        template_path = resource_path("templates", "Stellar Density Scan Worksheet.xlsx")
+
                         notes = self.observer_storage.get_active()
-                        
+
                         if not notes:
                             self.model.add_comms_message("[✗] No observer notes to export (XLSX skipped)")
                         else:
                             # Get CMDR name and metadata
                             cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
-                            
+
                             z_bin = None
                             sample_indexes = []
-                            
+
                             for n in notes:
                                 zb = getattr(n, "z_bin", None) if not isinstance(n, dict) else n.get("z_bin")
                                 si = getattr(n, "sample_index", None) if not isinstance(n, dict) else n.get("sample_index")
                                 if z_bin is None and zb is not None:
                                     try:
                                         z_bin = int(zb)
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug("z_bin parse failed: %s", e)
                                         pass
                                 if si is not None:
                                     try:
                                         sample_indexes.append(int(si))
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug("sample_index parse failed: %s", e)
                                         pass
-                            
+
                             sample_tag = ""
                             if sample_indexes:
                                 s_min, s_max = min(sample_indexes), max(sample_indexes)
                                 sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
-                            
+
                             # Export as multiple files (one per sample)
                             created_files = export_density_worksheet_from_notes_multi_file(
                                 notes,
@@ -498,7 +503,7 @@ class Earth2Presenter:
                                 sample_tag=sample_tag,
                                 z_bin=z_bin,
                             )
-                            
+
                             num_files = len(created_files)
                             self.model.add_comms_message(f"[✓] Density XLSX exported: {num_files} sample file(s) created")
                             for fp in created_files:
@@ -508,111 +513,182 @@ class Earth2Presenter:
                     self.model.add_comms_message(f"[✗] Density XLSX export failed: {e}")
                     import traceback
                     traceback.print_exc()
-                
+
                 # Summary
                 self.model.add_comms_message(f"[SYSTEM] Export complete: {export_count}/3 files exported to {export_dir}")
-            
+
             # Run in background thread
             threading.Thread(target=export_thread, daemon=True).start()
-            
+
         except Exception as e:
             self.model.add_comms_message(f"[ERROR] Export all failed: {e}")
-            print(f"[PRESENTER ERROR] Export all: {e}")
-            import traceback
-            traceback.print_exc()
-    def handle_export_density_xlsx(self):
-        """Handle DW3 density worksheet XLSX export request with folder picker - creates one file per sample"""
+            logger.error("Export all: %s", e, exc_info=True)
+
+    def handle_export_diagnostics(self):
+        """Export a diagnostics ZIP bundle (logs/settings/db + manifest)."""
         try:
-            from pathlib import Path
-            from datetime import datetime
             import threading
-            from tkinter import filedialog
+            from datetime import datetime
+            from pathlib import Path
+            from tkinter import filedialog, messagebox
 
-            if not self.observer_storage:
-                self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
-                return
-
-            # Ask user to select export folder
-            initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
-            export_dir = filedialog.askdirectory(
-                title="Select Export Folder for Density Worksheets",
-                initialdir=initial_dir,
-                parent=self.view.root
-            )
-            
-            if not export_dir:
-                # User cancelled
-                return
-            
+            # Default suggested filename
+            export_dir = self.config.get("EXPORT_DIR") or Path(self.config.get("OUTDIR", Path.home()))
             export_dir = Path(export_dir)
-            
-            # Save this directory for next time
-            self.config["EXPORT_DIR"] = str(export_dir)
+            export_dir.mkdir(parents=True, exist_ok=True)
 
-            self.model.add_comms_message("[SYSTEM] Starting density worksheet export (one file per sample)...")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_name = f"DW3_Survey_Logger_Diagnostics_{ts}.zip"
+            default_path = export_dir / default_name
 
-            def export_thread():
+            zip_path_str = filedialog.asksaveasfilename(
+                title="Save Diagnostics Bundle",
+                defaultextension=".zip",
+                initialdir=str(export_dir),
+                initialfile=default_name,
+                filetypes=[("ZIP archive", "*.zip")],
+            )
+            if not zip_path_str:
+                return
+
+            zip_path = Path(zip_path_str)
+
+            # Friendly privacy heads-up
+            try:
+                if not messagebox.askyesno(
+                    "Include data?",
+                    "Diagnostics can include your database and may contain survey data.\n\nDo you want to include the databases in the bundle?",
+                    icon="warning",
+                ):
+                    include_db = False
+                else:
+                    include_db = True
+            except Exception as e:
+                logger.debug("include_db dialog failed: %s", e)
+                include_db = True
+
+            self.model.add_comms_message("[SYSTEM] Building diagnostics bundle...")
+
+            def _worker():
                 try:
-                    # Template ships with the app under ./templates
-                    template_path = Path(__file__).parent / "templates" / "Stellar Density Scan Worksheet.xlsx"
-
-                    from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file
-
-                    notes = self.observer_storage.get_active()
-
-                    # CMDR name for filename (DW3 wants it visible without opening the sheet)
-                    cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
-
-                    # Optional metadata for filename: Z-bin + sample range
-                    z_bin = None
-                    sample_indexes = []
-
-                    for n in notes:
-                        # notes are ObserverNote objects, but be defensive in case dicts slip through
-                        zb = getattr(n, "z_bin", None) if not isinstance(n, dict) else n.get("z_bin")
-                        si = getattr(n, "sample_index", None) if not isinstance(n, dict) else n.get("sample_index")
-                        if z_bin is None and zb is not None:
-                            try:
-                                z_bin = int(zb)
-                            except Exception:
-                                z_bin = None
-                        if si is not None:
-                            try:
-                                sample_indexes.append(int(si))
-                            except Exception:
-                                pass
-
-                    sample_tag = ""
-                    if sample_indexes:
-                        s_min, s_max = min(sample_indexes), max(sample_indexes)
-                        sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
-
-                    # Export as multiple files (one per sample)
-                    created_files = export_density_worksheet_from_notes_multi_file(
-                        notes,
-                        template_path,
-                        export_dir,  # Directory, not specific file
-                        cmdr_name=cmdr,
-                        sample_tag=sample_tag,
-                        z_bin=z_bin,
+                    from diagnostics_exporter import export_diagnostics_zip
+                    out = export_diagnostics_zip(
+                        zip_path=zip_path,
+                        config=self.config,
+                        model=self.model,
+                        include_db=include_db,
                     )
-
-                    num_files = len(created_files)
-                    self.model.add_comms_message(f"[SYSTEM] Density worksheets exported: {num_files} sample file(s)")
-                    for fp in created_files:
-                        self.model.add_comms_message(f"    - {fp.name}")
+                    self.model.add_comms_message(f"[INFO] Diagnostics saved: {out.name}")
+                    self.model.add_comms_message(f"[INFO] Full path: {out}")
                 except Exception as e:
-                    self.model.add_comms_message(f"[ERROR] Density worksheet export failed: {e}")
+                    self.model.add_comms_message(f"[ERROR] Diagnostics export failed: {e}")
+                    import traceback
+                    traceback.print_exc()
 
-            threading.Thread(target=export_thread, daemon=True).start()
+            threading.Thread(target=_worker, daemon=True).start()
 
         except Exception as e:
-            self.model.add_comms_message(f"[ERROR] Density worksheet export error: {e}")
+            logger.error("Export Diagnostics: %s", e, exc_info=True)
+            try:
+                self.model.add_comms_message(f"[ERROR] Diagnostics export failed: {e}")
+            except Exception as e2:
+                logger.debug("Failed to report diagnostics error to comms: %s", e2)
+                pass
+
+    def handle_export_density_xlsx(self):
+            """Handle DW3 density worksheet XLSX export request with folder picker - creates one file per sample"""
+            try:
+                from pathlib import Path
+                from datetime import datetime
+                import threading
+                from tkinter import filedialog
+
+                if not self.observer_storage:
+                    self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
+                    return
+
+                # Ask user to select export folder
+                initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
+                export_dir = filedialog.askdirectory(
+                    title="Select Export Folder for Density Worksheets",
+                    initialdir=initial_dir,
+                    parent=self.view.root
+                )
+
+                if not export_dir:
+                    # User cancelled
+                    return
+
+                export_dir = Path(export_dir)
+
+                # Save this directory for next time
+                self.config["EXPORT_DIR"] = str(export_dir)
+
+                self.model.add_comms_message("[SYSTEM] Starting density worksheet export (one file per sample)...")
+
+                def export_thread():
+                    try:
+                        # Template ships with the app under ./templates
+                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
+                        template_path = resource_path("templates", "Stellar Density Scan Worksheet.xlsx")
+
+                        notes = self.observer_storage.get_active()
+
+                        # CMDR name for filename (DW3 wants it visible without opening the sheet)
+                        cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
+
+                        # Optional metadata for filename: Z-bin + sample range
+                        z_bin = None
+                        sample_indexes = []
+
+                        for n in notes:
+                            # notes are ObserverNote objects, but be defensive in case dicts slip through
+                            zb = getattr(n, "z_bin", None) if not isinstance(n, dict) else n.get("z_bin")
+                            si = getattr(n, "sample_index", None) if not isinstance(n, dict) else n.get("sample_index")
+                            if z_bin is None and zb is not None:
+                                try:
+                                    z_bin = int(zb)
+                                except Exception as e:
+                                    logger.debug("z_bin parse failed: %s", e)
+                                    z_bin = None
+                            if si is not None:
+                                try:
+                                    sample_indexes.append(int(si))
+                                except Exception as e:
+                                    logger.debug("sample_index parse failed: %s", e)
+                                    pass
+
+                        sample_tag = ""
+                        if sample_indexes:
+                            s_min, s_max = min(sample_indexes), max(sample_indexes)
+                            sample_tag = f"S{s_min:02d}-S{s_max:02d}" if s_min != s_max else f"S{s_min:02d}"
+
+                        # Export as multiple files (one per sample)
+                        created_files = export_density_worksheet_from_notes_multi_file(
+                            notes,
+                            template_path,
+                            export_dir,  # Directory, not specific file
+                            cmdr_name=cmdr,
+                            sample_tag=sample_tag,
+                            z_bin=z_bin,
+                        )
+
+                        num_files = len(created_files)
+                        self.model.add_comms_message(f"[SYSTEM] Density worksheets exported: {num_files} sample file(s)")
+                        for fp in created_files:
+                            self.model.add_comms_message(f"    - {fp.name}")
+                    except Exception as e:
+                        self.model.add_comms_message(f"[ERROR] Density worksheet export failed: {e}")
+
+                threading.Thread(target=export_thread, daemon=True).start()
+
+            except Exception as e:
+                self.model.add_comms_message(f"[ERROR] Density worksheet export error: {e}")
 
 
 
 
-    
+
     def handle_rescan(self):
         """Handle rescan current journal request"""
         try:
@@ -623,75 +699,73 @@ class Earth2Presenter:
                 self.model.add_comms_message("[INFO] Live journal monitoring is not active – rescan unavailable")
         except Exception as e:
             self.model.add_comms_message("[ERROR] Rescan failed due to an internal error. See logs for details.")
-            print(f"[PRESENTER ERROR] Rescan: {e}")
-    
+            logger.error("Rescan: %s", e, exc_info=True)
+
     def handle_import_journals(self):
         """Handle import old journals request"""
         try:
             self.model.add_comms_message("[SYSTEM] Starting journal import...")
             self.model.add_comms_message("[INFO] This may take a few minutes...")
-            
+
             # Run import in background thread to not block UI
             import threading
-            
+
             def import_thread():
                 try:
                     from import_journals import JournalImporter
                     from pathlib import Path
-                    
+
                     # Get journal directory from config
                     journal_dir = Path(self.config.get("JOURNAL_DIR", ""))
-                    
+
                     if not journal_dir.exists():
                         self.model.add_comms_message("[ERROR] Journal directory not found!")
                         return
-                    
+
                     # Create importer (use self.model.db, not self.model.database)
                     importer = JournalImporter(
                         self.model.db,  # Changed from self.model.database
                         self.model,
                         self.model.error_handler.logger if hasattr(self.model, 'error_handler') else None
                     )
-                    
+
                     # Import all journals
                     stats = importer.import_journal_directory(journal_dir)
-                    
+
                     # Report results
                     self.model.add_comms_message(f"[INFO] Files processed: {stats['files_processed']}")
                     self.model.add_comms_message(f"[INFO] Candidates found: {stats['candidates_found']}")
                     self.model.add_comms_message(f"[INFO] Duplicates skipped: {stats['duplicates_skipped']}")
-                    
+
                     if stats['errors'] > 0:
                         self.model.add_comms_message(f"[WARNING] Errors encountered: {stats['errors']}")
-                    
+
                     self.model.add_comms_message("[INFO] Import complete!")
-                    
+
                     # Reload ALL stats and data to show new data
                     self.model.load_stats_from_db()
                     self.model.load_rating_distribution(force_refresh=True)
-                    
+
                     # Show current stats for debugging
                     current_stats = self.model.get_stats()
                     self.model.add_comms_message(f"[INFO] Total in DB: {current_stats.get('total_all', 0)}")
                     self.model.add_comms_message(f"[INFO] ELW in DB: {current_stats.get('total_elw', 0)}")
-                    
+
                     # Force UI refresh (it will auto-refresh in the next cycle)
                     # No need to manually call _update_statistics as it runs in refresh loop
-                    
+
                     self.model.add_comms_message("[INFO] Statistics updated!")
-                    
+
                 except Exception as e:
                     self.model.add_comms_message(f"[ERROR] Import failed: {e}")
-                    print(f"[PRESENTER ERROR] Import: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
+                    logger.error("Import: %s", e, exc_info=True)
+
             # Start import thread
             thread = threading.Thread(target=import_thread, daemon=True)
             thread.start()
-            
+
         except Exception as e:
-            print(f"[PRESENTER ERROR] Import journals: {e}")
+            logger.error("Import journals: %s", e, exc_info=True)
 
 
     def handle_journal_folder(self):
@@ -706,7 +780,8 @@ class Earth2Presenter:
             try:
                 if current:
                     initial = str(Path(current))
-            except Exception:
+            except Exception as e:
+                logger.debug("journal folder path resolve: %s", e)
                 initial = ""
 
             folder = filedialog.askdirectory(
@@ -726,7 +801,8 @@ class Earth2Presenter:
                         f"Folder not found:\n{journal_dir}",
                         parent=self.view.root
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug("messagebox.showwarning failed: %s", e)
                     pass
                 return
 
@@ -743,7 +819,8 @@ class Earth2Presenter:
                 if sp.exists():
                     try:
                         data = json.loads(sp.read_text(encoding="utf-8"))
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Failed to load settings file: %s", e)
                         data = {}
 
                 data["journal_dir"] = str(journal_dir)
@@ -794,33 +871,35 @@ class Earth2Presenter:
                 try:
                     from tkinter import messagebox
                     messagebox.showwarning(
-                        "Hotkey Settings", 
-                        f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}", 
+                        "Hotkey Settings",
+                        f"Invalid hotkey: {e}\n\nKeeping: {current_hotkey}",
                         parent=self.view.root
                     )
-                except Exception:
+                except Exception as e2:
+                    logger.debug("messagebox.showwarning failed: %s", e2)
                     pass
                 self.config["HOTKEY_LABEL"] = current_hotkey
                 return
 
-            # Save to config file
+            # Save to bootstrap settings file (stable across OUTDIR changes)
             try:
                 from pathlib import Path
                 import json
-                
-                config_path = Path(self.config.get("OUTDIR", ".")) / "config.json"
-                
-                if config_path.exists():
-                    with open(config_path, "r", encoding="utf-8") as f:
-                        config_data = json.load(f)
-                else:
-                    config_data = {}
-                
-                config_data["HOTKEY_LABEL"] = self.config["HOTKEY_LABEL"]
-                
-                with open(config_path, "w", encoding="utf-8") as f:
-                    json.dump(config_data, f, indent=2)
-                
+
+                settings_path = self.config.get("BOOTSTRAP_SETTINGS_PATH", "")
+                sp = Path(settings_path) if settings_path else (Path.home() / ".dw3_survey_logger" / "settings.json")
+                sp.parent.mkdir(parents=True, exist_ok=True)
+
+                data = {}
+                if sp.exists():
+                    try:
+                        data = json.loads(sp.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = {}
+
+                data["hotkey_label"] = self.config["HOTKEY_LABEL"]
+                sp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
                 self.model.add_comms_message(
                     f"[OPTIONS] Hotkey updated to: {self.config['HOTKEY_LABEL']}\n"
                     "Restart required for changes to take effect."
@@ -830,6 +909,28 @@ class Earth2Presenter:
 
         except Exception as e:
             self.model.add_comms_message(f"[ERROR] Options failed: {e}")
+
+    def handle_reset_observer_progress(self):
+        """Reset all observer sample progress after user confirmation."""
+        try:
+            from tkinter import messagebox
+            if not self.observer_storage:
+                self.model.add_comms_message("[OPTIONS] Observer storage not available.")
+                return
+            confirmed = messagebox.askyesno(
+                "Reset Observer Progress",
+                "This will reset all observer sample progress to 0.\n\n"
+                "Your data is not deleted — records are marked as reset "
+                "and can be recovered from the database.\n\n"
+                "Are you sure?",
+            )
+            if not confirmed:
+                return
+            count = self.observer_storage.reset_sample_progress()
+            self.model.add_comms_message(f"[OPTIONS] Observer progress reset ({count} records).")
+        except Exception as e:
+            logger.error("Failed to reset observer progress: %s", e)
+            self.model.add_comms_message(f"[OPTIONS] Failed to reset progress: {e}")
 
     def handle_about(self):
         """Handle About dialog (includes copyable diagnostics)."""
@@ -848,7 +949,8 @@ class Earth2Presenter:
                     pp = Path(p)
                     if pp.exists():
                         return f"{pp.stat().st_size} bytes"
-                except Exception:
+                except Exception as e:
+                    logger.debug("_size stat failed: %s", e)
                     pass
                 return "-"
 
@@ -879,30 +981,30 @@ class Earth2Presenter:
 
             self.view.show_about_dialog(about_text, copy_text=diagnostics)
         except Exception as e:
-            print(f"[PRESENTER ERROR] About: {e}")
-    
+            logger.error("About: %s", e, exc_info=True)
+
     # ========================================================================
     # PUBLIC METHODS - Called from external components (e.g., journal monitor)
     # ========================================================================
-    
+
     def log_candidate(self, candidate_data: Dict[str, Any]):
         """
         Log a new candidate body
-        
+
         Args:
             candidate_data: Dictionary with candidate information
         """
         try:
             # Update model
             was_logged = self.model.log_candidate(candidate_data)
-            
+
             if was_logged:
                 # Add COMMS message
                 body_name = candidate_data.get("body_name", "Unknown")
                 rating = candidate_data.get("earth2_rating", "-")
                 similarity_score = candidate_data.get("similarity_score", -1)
                 goldilocks_score = candidate_data.get("goldilocks_score", -1)
-                
+
                 # Format COMMS message with both scores
                 score_parts = []
                 if similarity_score >= 0:
@@ -910,32 +1012,34 @@ class Earth2Presenter:
                 if goldilocks_score >= 0:
                     stars = "⭐" * min(goldilocks_score // 3, 5)
                     score_parts.append(f"Gold:{goldilocks_score}/16 {stars}")
-                
+
                 if score_parts:
                     score_text = " | ".join(score_parts)
                     self.model.add_comms_message(f"[INFO] {body_name} | {rating} | {score_text}")
                 else:
                     self.model.add_comms_message(f"[INFO] {body_name} | {rating}")
-                
+
                 # Calculate similarity breakdown if score is available
                 similarity_breakdown = {}
                 goldilocks_breakdown = {}
-                
+
                 if similarity_score >= 0:
                     try:
                         from earth_similarity_score import get_similarity_breakdown
                         similarity_breakdown = get_similarity_breakdown(candidate_data)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("get_similarity_breakdown failed: %s", e)
                         pass
-                
+
                 if goldilocks_score >= 0:
                     try:
                         from earth_similarity_score import calculate_goldilocks_score
                         goldilocks_data = calculate_goldilocks_score(candidate_data)
                         goldilocks_breakdown = goldilocks_data.get("breakdown", {})
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("calculate_goldilocks_score failed: %s", e)
                         pass
-                
+
                 # Update target lock with latest candidate
                 self.model.update_status({
                     "last_system": candidate_data.get("star_system", ""),
@@ -950,26 +1054,26 @@ class Earth2Presenter:
                     "last_goldilocks_score": goldilocks_score,
                     "last_goldilocks_breakdown": goldilocks_breakdown,
                 })
-        
+
         except Exception as e:
-            print(f"[PRESENTER ERROR] Log candidate: {e}")
-    
+            logger.error("Log candidate: %s", e, exc_info=True)
+
     def update_journal_status(self, journal_file: str, mode: str):
         """Update current journal file status"""
         self.model.update_status({
             "current_journal": journal_file,
             "journal_mode": mode,
         })
-    
+
     def update_scan_status(self, status_text: str):
         """Update scan status text"""
         self.model.update_status({"scan_status": status_text})
-    
+
     def update_cmdr(self, cmdr_name: str):
         """Update current commander"""
         self.model.update_status({"cmdr_name": cmdr_name})
         self.model.load_stats_from_db(cmdr_name)
-    
+
     def add_comms_message(self, message: str):
         """Add message to COMMS feed"""
         self.model.add_comms_message(message)

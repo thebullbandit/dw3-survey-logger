@@ -38,7 +38,10 @@ import queue
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
+
+import logging
+logger = logging.getLogger("dw3.earth2_database")
 
 
 # ============================================================================
@@ -147,8 +150,9 @@ class Earth2Database:
         # Pragmas: stable + fast enough, and avoids 'database is locked' spikes
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
-        except Exception:
+        except Exception as e:
             # WAL can fail on some unusual filesystems; continue anyway.
+            logger.debug("WAL pragma failed: %s", e)
             pass
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=3000;")
@@ -166,7 +170,8 @@ class Earth2Database:
 
         try:
             conn.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("conn.close failed: %s", e)
             pass
 
     def _submit(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
@@ -243,48 +248,55 @@ class Earth2Database:
                 try:
                     conn.execute("ALTER TABLE candidates ADD COLUMN similarity_score REAL")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Migration: similarity_score column: %s", e)
                     pass  # Column already exists
 
                 # Add goldilocks columns if they don't exist
                 try:
                     conn.execute("ALTER TABLE candidates ADD COLUMN goldilocks_score INTEGER")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Migration: goldilocks_score column: %s", e)
                     pass
 
                 try:
                     conn.execute("ALTER TABLE candidates ADD COLUMN goldilocks_category TEXT")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Migration: goldilocks_category column: %s", e)
                     pass
 
                 # Add event_id column for linking to observer_notes
                 try:
                     conn.execute("ALTER TABLE candidates ADD COLUMN event_id TEXT")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Migration: event_id column: %s", e)
                     pass
 
                 # Add system_address column (game's unique system ID)
                 try:
                     conn.execute("ALTER TABLE candidates ADD COLUMN system_address INTEGER")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Migration: system_address column: %s", e)
                     pass
 
                 # Create index on event_id for fast joins with observer_notes
                 try:
                     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_event_id ON candidates(event_id)")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Index creation: idx_candidates_event_id: %s", e)
                     pass
 
                 # Create index on system_address
                 try:
                     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_system_address ON candidates(system_address)")
                     conn.commit()
-                except:
+                except sqlite3.OperationalError as e:
+                    logger.debug("Index creation: idx_candidates_system_address: %s", e)
                     pass
         
                 # Sessions table
@@ -643,7 +655,7 @@ class Earth2Database:
                     conn.execute("""
                         INSERT INTO sessions (session_id, cmdr_name, journal_file, start_time)
                         VALUES (?, ?, ?, ?)
-                    """, (session_id, cmdr_name, journal_file, datetime.utcnow().isoformat()))
+                    """, (session_id, cmdr_name, journal_file, datetime.now(timezone.utc).isoformat()))
         
                     conn.commit()
         
@@ -664,7 +676,7 @@ class Earth2Database:
                         UPDATE sessions
                         SET end_time = ?
                         WHERE session_id = ?
-                    """, (datetime.utcnow().isoformat(), session_id))
+                    """, (datetime.now(timezone.utc).isoformat(), session_id))
         
                     conn.commit()
     
@@ -766,18 +778,21 @@ class Earth2Database:
         # Stop worker
         try:
             self._task_q.put(None)
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: task_q.put(None) failed: %s", e)
             pass
 
         # Join worker (best effort)
         try:
             self._worker.join(timeout=10.0)
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: worker.join failed: %s", e)
             pass
 
 
     def __del__(self):
         try:
             self.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("__del__: close() failed: %s", e)
             pass

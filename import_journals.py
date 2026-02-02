@@ -23,10 +23,13 @@ existing discoveries into the database.
 # ============================================================================
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
 import argparse
+
+_logger = logging.getLogger("dw3.import_journals")
 
 
 # ============================================================================
@@ -59,7 +62,7 @@ class JournalImporter:
     def _log(self, message):
         """Log message (if logger available)"""
         if self.logger:
-            self._log(message)
+            self.logger.info(message)
         else:
             print(message)
     
@@ -183,7 +186,7 @@ class JournalImporter:
         terraform_state = event.get("TerraformState", "")
         
         # Is it a candidate?
-        is_elw = planet_class == "Earthlike body"
+        is_elw = planet_class in {"Earthlike body", "Earth-like body"}
         is_terraformable = "Candidate for terraforming" in terraform_state
         
         if not (is_elw or is_terraformable):
@@ -222,8 +225,8 @@ class JournalImporter:
             "ascending_node_deg": event.get("AscendingNode", 0.0),
             "mean_anomaly_deg": event.get("MeanAnomaly", 0.0),
             "axial_tilt_deg": event.get("AxialTilt", 0.0),
-            "was_discovered": "False" if event.get("WasDiscovered", True) else "True",
-            "was_mapped": "False" if event.get("WasMapped", True) else "True",
+            "was_discovered": "True" if event.get("WasDiscovered", False) else "False",
+            "was_mapped": "True" if event.get("WasMapped", False) else "False",
             "cmdr_name": cmdr_name or "Unknown",
             "session_id": "IMPORT"
         }
@@ -261,8 +264,8 @@ class JournalImporter:
             if goldilocks["total"] >= 0:
                 candidate_data["goldilocks_score"] = goldilocks["total"]
                 candidate_data["goldilocks_category"] = goldilocks["category"]
-        except Exception:
-            pass  # Goldilocks calculation optional
+        except Exception as e:
+            _logger.debug("Goldilocks calculation failed: %s", e)
         
         # Calculate worth landing
         worth, reason = self.model.calculate_worth_landing(temp_k, gravity_g, dist_ly)
@@ -337,7 +340,7 @@ def main():
     # Setup
     from earth2_database import Earth2Database
     from model import Earth2Model
-    from error_handling import FileLogger
+    from dependency_injection import FileLogger
     
     # Create logger
     logger = FileLogger(args.db_path.parent / "import.log")
@@ -361,10 +364,7 @@ def main():
         "WORTH_GRAV_MAX": 1.60
     }
     
-    from error_handling import ErrorHandler
-    error_handler = ErrorHandler(logger)
-    
-    model = Earth2Model(database, config, error_handler)
+    model = Earth2Model(database, config)
     
     # Create importer
     importer = JournalImporter(database, model, logger)

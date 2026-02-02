@@ -28,6 +28,12 @@ from enum import Enum
 from typing import Optional, Tuple, List, Dict, Any
 import json
 
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
+SURVEY_AXIS_INDEX = 1  # Journal Y = galactic height (the DW3 survey axis)
+
 
 # =============================================================================
 # ENUMS
@@ -152,7 +158,7 @@ class ObserverNote:
     record_status: RecordStatus = RecordStatus.ACTIVE
 
     # === Versioning ===
-    schema_version: int = 1
+    schema_version: int = 2
     app_version: str = ""
 
     # === Hash chain (set during save) ===
@@ -295,10 +301,10 @@ def generate_event_id(journal_event: Dict[str, Any]) -> str:
 
 def calculate_z_bin(z_coordinate: float, bin_size: int = 50) -> int:
     """
-    Calculate Z-bin from Z coordinate.
+    Calculate Z-bin from galactic height (journal Y coordinate).
 
     Args:
-        z_coordinate: Z position in light-years
+        z_coordinate: Galactic height in light-years (journal StarPos[1])
         bin_size: Size of each bin (default 50 LY)
 
     Returns:
@@ -333,7 +339,7 @@ def create_observation_from_context(
         system_address=context.get('system_address'),
         system_name=context.get('system_name', ''),
         star_pos=star_pos,
-        z_bin=calculate_z_bin(star_pos[2]) if star_pos else 0,
+        z_bin=calculate_z_bin(star_pos[SURVEY_AXIS_INDEX]) if star_pos else 0,
         session_id=session_id,
         body_name=context.get('body_name'),
         app_version=app_version,

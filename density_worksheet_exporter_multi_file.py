@@ -137,7 +137,8 @@ def export_density_worksheet_from_notes_multi_file(
         for i, z in enumerate(static_z):
             ws.cell(START_ROW + i, 2).value = z
 
-        # Header date
+        # Header: CMDR name and date
+        ws["A1"].value = f"CMDR {_cmdr or 'UnknownCMDR'} - DW3 Stellar Density Scans"
         if rows:
             dt = _safe_parse_iso(str(rows[0].get("timestamp_utc") or ""))
             if dt:

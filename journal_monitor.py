@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 
 from observer_models import generate_event_id
 
+import logging
+logger = logging.getLogger("dw3.journal_monitor")
+
 
 # ============================================================================
 # JOURNAL FILE READER
@@ -59,7 +62,8 @@ class JournalFileReader:
                 key=lambda p: p.stat().st_mtime
             )
             return files[-1] if files else None
-        except Exception:
+        except Exception as e:
+            logger.debug("find_newest_journal failed: %s", e)
             return None
     
     def find_all_journals(self) -> list[Path]:
@@ -69,7 +73,8 @@ class JournalFileReader:
                 self.journal_dir.glob("Journal.*.log"),
                 key=lambda p: p.stat().st_mtime
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("find_all_journals failed: %s", e)
             return []
     
     def open_file(self, filepath: Path, from_start: bool = False) -> bool:
@@ -100,8 +105,9 @@ class JournalFileReader:
                 self.file_handle.seek(0, os.SEEK_END)
             
             return True
-            
-        except Exception:
+
+        except Exception as e:
+            logger.debug("Failed to open journal file %s: %s", filepath, e)
             self.file_handle = None
             self.current_file = None
             return False
@@ -119,7 +125,8 @@ class JournalFileReader:
         try:
             line = self.file_handle.readline()
             return line if line else None
-        except Exception:
+        except Exception as e:
+            logger.debug("read_line failed: %s", e)
             return None
     
     def is_rotated(self) -> bool:
@@ -134,7 +141,8 @@ class JournalFileReader:
         
         try:
             return self.file_handle.closed or not self.current_file.exists()
-        except Exception:
+        except Exception as e:
+            logger.debug("is_rotated check failed: %s", e)
             return True
     
     def seed_initial_state(self, filepath: Path) -> list[Dict[str, Any]]:
@@ -164,9 +172,11 @@ class JournalFileReader:
                         # Only collect state-relevant events
                         if event_type in {"Commander", "LoadGame", "Location", "FSDJump"}:
                             events.append(evt)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("seed_initial_state: skipping line: %s", e)
                         continue
-        except Exception:
+        except Exception as e:
+            logger.debug("seed_initial_state failed for %s: %s", filepath, e)
             pass
         
         return events
@@ -195,9 +205,11 @@ class JournalFileReader:
                             name = evt.get("Name") or evt.get("Commander")
                             if name:
                                 return name
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("extract_cmdr_name: skipping line: %s", e)
                         continue
-        except Exception:
+        except Exception as e:
+            logger.debug("extract_cmdr_name failed for %s: %s", filepath, e)
             pass
         
         return "Unknown"
@@ -207,7 +219,8 @@ class JournalFileReader:
         if self.file_handle:
             try:
                 self.file_handle.close()
-            except Exception:
+            except Exception as e:
+                logger.debug("file_handle.close failed: %s", e)
                 pass
             self.file_handle = None
             self.current_file = None
@@ -257,7 +270,8 @@ class EventProcessor:
             self.events_processed += 1
             return evt
             
-        except Exception:
+        except Exception as e:
+            logger.debug("JSON parse failed: %s", e)
             self.events_skipped += 1
             return None
     
@@ -400,7 +414,8 @@ class JournalMonitor:
                 self.state_manager.on_commander({'Name': cmdr_name})
                 try:
                     self.presenter.notify_observer_context_changed()
-                except Exception:
+                except Exception as e:
+                    logger.debug("notify_observer_context_changed failed: %s", e)
                     pass
     
     def _handle_location_update(self, evt: Dict[str, Any]):
@@ -429,7 +444,8 @@ class JournalMonitor:
                     # Populate target-lock context even when we haven't logged a candidate yet
                     "last_system": self.current_system,
                 })
-        except Exception:
+        except Exception as e:
+            logger.debug("model.update_status (location) failed: %s", e)
             pass
 
         # Update state manager (Location event only, FSDJump handled separately)
@@ -437,7 +453,8 @@ class JournalMonitor:
             self.state_manager.on_location(evt)
             try:
                 self.presenter.notify_observer_context_changed()
-            except Exception:
+            except Exception as e:
+                logger.debug("notify_observer_context_changed failed: %s", e)
                 pass
     
     def _handle_fsd_jump(self, evt: Dict[str, Any]):
@@ -452,7 +469,8 @@ class JournalMonitor:
             self.state_manager.on_fsd_jump(evt)
             try:
                 self.presenter.notify_observer_context_changed()
-            except Exception:
+            except Exception as e:
+                logger.debug("notify_observer_context_changed failed: %s", e)
                 pass
     
     def _handle_scan(self, evt: Dict[str, Any]):
@@ -466,7 +484,8 @@ class JournalMonitor:
             self.state_manager.on_scan(evt)
             try:
                 self.presenter.notify_observer_context_changed()
-            except Exception:
+            except Exception as e:
+                logger.debug("notify_observer_context_changed failed: %s", e)
                 pass
         # Keep Target Lock in sync with what you're currently scanning.
         # If this scan turns into a candidate, presenter.log_candidate() will overwrite these fields.
@@ -486,7 +505,8 @@ class JournalMonitor:
                         "last_inara": self.model.generate_inara_link(system),
                     })
                 self.model.update_status(update)
-        except Exception:
+        except Exception as e:
+            logger.debug("model.update_status (scan target) failed: %s", e)
             pass
 
 
@@ -591,9 +611,9 @@ class JournalMonitor:
             "tidal_lock": evt.get("TidalLock"),
 
             # Orbital / rotation (journal uses seconds for many of these; store as days when possible)
-            "rotation_period_days": self._to_float(evt.get("RotationPeriod")) / 86400.0 if evt.get("RotationPeriod") not in (None, "") else None,
-            "orbital_period_days": self._to_float(evt.get("OrbitalPeriod")) / 86400.0 if evt.get("OrbitalPeriod") not in (None, "") else None,
-            "semi_major_axis_au": self._to_float(evt.get("SemiMajorAxis")) / 149597870700.0 if evt.get("SemiMajorAxis") not in (None, "") else None,
+            "rotation_period_days": (v / 86400.0 if (v := self._to_float(evt.get("RotationPeriod"))) is not None else None),
+            "orbital_period_days": (v / 86400.0 if (v := self._to_float(evt.get("OrbitalPeriod"))) is not None else None),
+            "semi_major_axis_au": (v / 149597870700.0 if (v := self._to_float(evt.get("SemiMajorAxis"))) is not None else None),
             "orbital_eccentricity": self._to_float(evt.get("Eccentricity")),
             "orbital_inclination_deg": self._to_float(evt.get("OrbitalInclination")),
             "arg_of_periapsis_deg": self._to_float(evt.get("Periapsis")),
@@ -629,7 +649,8 @@ class JournalMonitor:
             if value is None or value == "":
                 return None
             return float(value)
-        except Exception:
+        except Exception as e:
+            logger.debug("_to_float conversion failed for %r: %s", value, e)
             return None
     
     # ========================================================================
@@ -689,7 +710,8 @@ class JournalMonitor:
         # Force file reopen on next loop
         try:
             self.file_reader.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("file_reader.close failed: %s", e)
             pass
 
         # Trigger rescan to re-seed state (cmdr/system) from the new folder

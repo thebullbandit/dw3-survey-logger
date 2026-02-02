@@ -29,9 +29,12 @@ Design principles:
 #   - Section dividers below are comments only (no logic changes).
 # ============================================================================
 
+import logging
 import sqlite3
 import json
 from pathlib import Path
+
+logger = logging.getLogger("dw3.observer_storage")
 from threading import Lock
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
@@ -73,7 +76,6 @@ class ObserverStorage:
     """
 
     TABLE_NAME = "observer_notes"
-    MAX_SYSTEMS_PER_SAMPLE = 20
 
     def __init__(self, db_path: Path, enable_wal: bool = True):
         """
@@ -103,9 +105,12 @@ class ObserverStorage:
 
         # Create tables and indexes
         self._create_tables()
-        
-        print("[OBSERVER STORAGE] loaded from:", __file__)
-        print("[OBSERVER STORAGE] db_path:", self.db_path)
+
+        # Upgrade from schema v1 → v2 (wrong survey axis)
+        self._upgrade_v1_to_v2()
+
+        logger.debug("loaded from: %s", __file__)
+        logger.debug("db_path: %s", self.db_path)
 
 
     def _create_tables(self):
@@ -145,7 +150,7 @@ class ObserverStorage:
                 payload_hash TEXT NOT NULL,
                 prev_hash TEXT,
 
-                schema_version INTEGER DEFAULT 1,
+                schema_version INTEGER DEFAULT 2,
 
                 FOREIGN KEY (supersedes_id) REFERENCES {self.TABLE_NAME}(id)
             )
@@ -192,6 +197,45 @@ class ObserverStorage:
             pass
 
 
+    def _upgrade_v1_to_v2(self):
+        """Back up and discard v1 data (wrong survey axis: used Z instead of Y)."""
+        try:
+            cursor = self.conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM {self.TABLE_NAME} WHERE schema_version = 1"
+            )
+            row = cursor.fetchone()
+            if not row or row["cnt"] == 0:
+                return
+
+            v1_count = row["cnt"]
+            logger.info(
+                "Found %d schema-v1 rows (wrong survey axis). "
+                "Backing up database before discarding.", v1_count
+            )
+
+            # Close current connection so we can rename the file
+            self.conn.close()
+
+            backup_path = self.db_path.with_suffix(".pre-v2.bak")
+            import shutil
+            shutil.copy2(str(self.db_path), str(backup_path))
+            logger.info("Backed up old database to %s", backup_path)
+
+            # Delete the old DB and reconnect fresh
+            self.db_path.unlink()
+            self.conn = sqlite3.connect(
+                str(self.db_path),
+                check_same_thread=False,
+                isolation_level=None,
+            )
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self._create_tables()
+            logger.info("Recreated empty database with schema v2.")
+
+        except Exception as e:
+            logger.error("Schema v1→v2 upgrade failed: %s", e)
+
     # =========================================================================
     # SAVE OPERATIONS
     # =========================================================================
@@ -223,12 +267,6 @@ class ObserverStorage:
             if getattr(note, "system_index", None) is None:
                 next_idx = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index)
 
-                # Hard cap: max systems per sample
-                if next_idx > self.MAX_SYSTEMS_PER_SAMPLE:
-                    raise ValueError(
-                        f"Sample #{note.sample_index} already has {self.MAX_SYSTEMS_PER_SAMPLE} systems. "
-                        "Mark the sample as COMPLETE to start the next sample."
-                    )
 
                 note.system_index = next_idx
 
@@ -654,17 +692,47 @@ class ObserverStorage:
     def get_sample_counts(self, session_id: str, z_bin: int) -> Dict[str, int]:
         """
         Get sample and system counts for the current session and z-bin.
-        
+
+        Counts persist across app restarts: the total completed samples
+        spans all sessions for this z_bin, and the current sample number
+        continues from where previous sessions left off.
+
         Returns a dict with:
-            - current_sample: The current sample_index (1-based)
-            - current_systems: Number of systems in the current sample
-            - total_samples: Total number of completed samples for this slice
+            - current_sample: The current sample_index (all-time, 1-based)
+            - current_systems: Number of systems in the current session sample
+            - total_samples: Total completed samples across all sessions for this z_bin
         """
         with self._lock:
-            # Get current sample index
-            current_sample = self._get_current_slice_sample_index(session_id, z_bin)
-            
-            # Get system count for current sample
+            # Get total completed samples across ALL sessions for this z_bin
+            cursor = self.conn.execute(f"""
+                SELECT COUNT(DISTINCT session_id || '-' || sample_index) as count
+                FROM {self.TABLE_NAME}
+                WHERE z_bin = ?
+                  AND record_status = 'active'
+                  AND slice_status = 'complete'
+            """, (z_bin,))
+            row = cursor.fetchone()
+            total_samples = row['count'] if row else 0
+
+            # Get current session's sample index (session-local)
+            session_sample = self._get_current_slice_sample_index(session_id, z_bin)
+
+            # All-time sample number = completed from prior sessions + current session sample
+            # Count completed samples from OTHER sessions
+            cursor = self.conn.execute(f"""
+                SELECT COUNT(DISTINCT session_id || '-' || sample_index) as count
+                FROM {self.TABLE_NAME}
+                WHERE z_bin = ?
+                  AND session_id != ?
+                  AND record_status = 'active'
+                  AND slice_status = 'complete'
+            """, (z_bin, session_id))
+            row = cursor.fetchone()
+            prior_session_samples = row['count'] if row else 0
+
+            current_sample = prior_session_samples + session_sample
+
+            # Get system count for current session's active sample
             cursor = self.conn.execute(f"""
                 SELECT COUNT(*) as count
                 FROM {self.TABLE_NAME}
@@ -672,27 +740,29 @@ class ObserverStorage:
                   AND z_bin = ?
                   AND sample_index = ?
                   AND record_status = 'active'
-            """, (session_id, z_bin, current_sample))
+            """, (session_id, z_bin, session_sample))
             row = cursor.fetchone()
             current_systems = row['count'] if row else 0
-            
-            # Get total completed samples (samples where slice_status='complete')
-            cursor = self.conn.execute(f"""
-                SELECT COUNT(DISTINCT sample_index) as count
-                FROM {self.TABLE_NAME}
-                WHERE session_id = ?
-                  AND z_bin = ?
-                  AND record_status = 'active'
-                  AND slice_status = 'complete'
-            """, (session_id, z_bin))
-            row = cursor.fetchone()
-            total_samples = row['count'] if row else 0
-            
+
             return {
                 'current_sample': current_sample,
                 'current_systems': current_systems,
                 'total_samples': total_samples
             }
+
+    def reset_sample_progress(self) -> int:
+        """Soft-delete all active observer notes, resetting progress to 0.
+
+        Returns the number of records affected.
+        """
+        with self._lock:
+            cursor = self.conn.execute(f"""
+                UPDATE {self.TABLE_NAME}
+                SET record_status = 'reset'
+                WHERE record_status = 'active'
+            """)
+            self.conn.commit()
+            return cursor.rowcount
 
     # =========================================================================
     # INTEGRITY VERIFICATION

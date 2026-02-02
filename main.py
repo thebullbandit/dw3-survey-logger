@@ -1,20 +1,37 @@
 # ============================================================================
+# CACHE CLEANUP (must run before any project imports)
+# ============================================================================
+import shutil
+import os
+from pathlib import Path
+
+_app_dir = Path(__file__).parent
+for _cache_dir in _app_dir.rglob("__pycache__"):
+    try:
+        shutil.rmtree(_cache_dir)
+    except Exception:
+        pass
+
+# ============================================================================
 # IMPORTS
 # ============================================================================
 
+import logging
 import tkinter as tk
 from utils import resource_path
-from pathlib import Path
 import sys
-import os
 import json
 
-# Add parent directory to path to import database module
-sys.path.insert(0, str(Path(__file__).parent.parent))
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("dw3.main")
 
 from earth2_database import Earth2Database
 from model import Earth2Model
-from view import Earth2View
+from ui import Earth2View
 from presenter import Earth2Presenter
 from journal_monitor import JournalMonitor
 from journal_state_manager import JournalStateManager
@@ -64,8 +81,9 @@ def get_config() -> dict:
             bootstrap_export_dir = data.get("export_dir")
             bootstrap_hotkey_label = data.get("hotkey_label")
             bootstrap_journal_dir = data.get("journal_dir")
-    except Exception:
+    except Exception as e:
         # optional; ignore corrupted/missing
+        logger.warning("Failed to load bootstrap settings: %s", e)
         pass
 
     if bootstrap_data_dir:
@@ -83,7 +101,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.13",
+        "VERSION": "0.9.14",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -150,7 +168,8 @@ def get_config() -> dict:
             exp = Path(os.path.expandvars(str(bootstrap_export_dir))).expanduser()
             config["EXPORT_DIR"] = exp
             config["OUTCSV"] = exp
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to apply export_dir override: %s", e)
             pass
 
     return config
@@ -185,16 +204,16 @@ def main():
     # Initialize database (DB worker thread)
     try:
         db = Earth2Database(config["DB_PATH"])
-        print(f"[MAIN] Database initialized: {config['DB_PATH']}")
+        logger.info("Database initialized: %s", config['DB_PATH'])
     except Exception as e:
         import traceback
-        print(f"[MAIN ERROR] Database initialization failed: {e}")
+        logger.error("Database initialization failed: %s", e)
         traceback.print_exc()
         db = None
 
 
     if db is None:
-        print("[MAIN] Cannot start without a working database. Exiting.")
+        logger.info("Cannot start without a working database. Exiting.")
         return
 
     # ========================================================================
@@ -203,18 +222,18 @@ def main():
     observer_db_path = config["OUTDIR"] / "DW3_Earth2_Observations.db"
     try:
         observer_storage = ObserverStorage(observer_db_path)
-        print(f"[MAIN] Observer storage initialized: {observer_db_path}")
+        logger.info("Observer storage initialized: %s", observer_db_path)
         # NOTE: presenter is created later; observer_storage will be passed into presenter constructor.
     except Exception as e:
-        print(f"[MAIN ERROR] Observer storage initialization failed: {e}")
+        logger.error("Observer storage initialization failed: %s", e)
         observer_storage = None
 
     # ========================================================================
     # CREATE JOURNAL STATE MANAGER (Step 3b)
     # ========================================================================
     state_manager = JournalStateManager()
-    print("[MAIN] Journal state manager initialized")
-    print("[SYSTEM] Auto-export on COMPLETE: disabled")
+    logger.info("Journal state manager initialized")
+    logger.info("Auto-export on COMPLETE: disabled")
 
 
     # Create Tkinter root
@@ -229,13 +248,28 @@ def main():
     # Bind observer storage to model for exporter/guards
     try:
         model.observer_db = observer_storage
-    except Exception:
+    except Exception as e:
+        logger.debug("model.observer_db assignment: %s", e)
         pass
     # Ensure presenter has observer_storage even if constructed differently
     try:
         presenter.observer_storage = observer_storage
-    except Exception:
+    except Exception as e:
+        logger.debug("presenter.observer_storage assignment: %s", e)
         pass
+
+    def _cleanup_databases():
+        """Close databases on early exit."""
+        try:
+            if db:
+                db.close()
+        except Exception as e:
+            logger.debug("Early cleanup: db.close: %s", e)
+        try:
+            if observer_storage:
+                observer_storage.close()
+        except Exception as e:
+            logger.debug("Early cleanup: observer_storage.close: %s", e)
 
     # Build UI
     try:
@@ -246,8 +280,10 @@ def main():
         try:
             from tkinter import messagebox
             messagebox.showerror("Startup Error", f"Failed to build UI:\n\n{e}\n\nPlease report this on GitHub.")
-        except Exception:
+        except Exception as e2:
+            logger.debug("messagebox.showerror failed: %s", e2)
             pass
+        _cleanup_databases()
         return
 
     # Start presenter (begins UI refresh loop)
@@ -259,8 +295,10 @@ def main():
         try:
             from tkinter import messagebox
             messagebox.showerror("Startup Error", f"Failed to start presenter:\n\n{e}\n\nPlease report this on GitHub.")
-        except Exception:
+        except Exception as e2:
+            logger.debug("messagebox.showerror failed: %s", e2)
             pass
+        _cleanup_databases()
         return
 
     # ========================================================================
@@ -290,7 +328,8 @@ def main():
                 # Update Z-target tracking
                 try:
                     state_manager.set_last_sample_z_bin(note.z_bin)
-                except Exception:
+                except Exception as e:
+                    logger.debug("set_last_sample_z_bin failed: %s", e)
                     pass
 
                 if note.sample_index is not None:
@@ -302,7 +341,7 @@ def main():
                         f"[OBSERVER] Saved: {note.slice_status.value}"
                     )
 
-                print(f"[MAIN] Observation saved with ID: {note_id}")
+                logger.info("Observation saved with ID: %s", note_id)
 
 
             except Exception as e:
@@ -328,7 +367,8 @@ def main():
         observer_overlay = None
         try:
             presenter.add_comms_message(f"[OBSERVER ERROR] Failed to initialize overlay: {e}")
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to report overlay error to comms: %s", e)
             pass
 
     def open_observer_overlay():
@@ -340,7 +380,8 @@ def main():
         # Update session_id in case it changed
         try:
             observer_overlay.session_id = getattr(journal_monitor, "current_session_id", None) or ""
-        except Exception:
+        except Exception as e:
+            logger.debug("Observer session_id update failed: %s", e)
             observer_overlay.session_id = ""
         observer_overlay.show(context)
         presenter.add_comms_message("[OBSERVER] Overlay opened")
@@ -367,8 +408,9 @@ def main():
     try:
         GLOBAL_HOTKEY_PYNPUT, FALLBACK_TK_SEQS, HOTKEY_LABEL = parse_hotkey_label(HOTKEY_LABEL)
         config["HOTKEY_LABEL"] = HOTKEY_LABEL  # store normalized
-    except Exception:
+    except Exception as e:
         # If config is invalid, fall back safely
+        logger.warning("Failed to parse hotkey label: %s", e)
         GLOBAL_HOTKEY_PYNPUT, FALLBACK_TK_SEQS, HOTKEY_LABEL = "<ctrl>+<alt>+o", ["<Control-o>", "<Control-O>"], "Ctrl+Alt+O"
         config["HOTKEY_LABEL"] = HOTKEY_LABEL
 
@@ -392,7 +434,8 @@ def main():
         for seq in FALLBACK_TK_SEQS:
             try:
                 root.bind(seq, on_hotkey_observation)
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to bind fallback hotkey %s: %s", seq, e)
                 pass
 
     hotkey_hint_text = ""
@@ -405,7 +448,7 @@ def main():
         presenter.add_comms_message(f"[SYSTEM] Observer hotkey: {GLOBAL_HOTKEY_LABEL} (in-app)")
         # Keep the error quiet, but useful for debugging in console.
         if hk_status.error:
-            print(f"[HOTKEY] Global hotkey unavailable, using fallback. Reason: {hk_status.error}")
+            logger.warning("Global hotkey unavailable, using fallback. Reason: %s", hk_status.error)
 
     if observer_overlay is not None:
         observer_overlay.hotkey_hint = hotkey_hint_text
@@ -446,57 +489,64 @@ def main():
             return
         on_closing._closing = True
 
-        print("[MAIN] Shutting down...")
+        logger.info("Shutting down...")
 
         # Unregister global hotkey (if active)
         try:
             if global_hotkey_handle is not None:
                 global_hotkey_handle.unregister()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: hotkey unregister: %s", e)
             pass
 
         # Close observer overlay if open
         try:
             if observer_overlay and observer_overlay.is_visible():
                 observer_overlay.hide()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: overlay hide: %s", e)
             pass
 
         # Stop journal monitor (joins its thread)
         try:
             if journal_monitor:
                 journal_monitor.stop()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: journal_monitor.stop: %s", e)
             pass
 
         # Stop presenter (cancels any pending after() calls)
         try:
             if presenter:
                 presenter.stop()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: presenter.stop: %s", e)
             pass
 
         # Close databases (stops DB worker thread and joins)
         try:
             if db:
                 db.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: db.close: %s", e)
             pass
 
         try:
             if observer_storage:
                 observer_storage.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: observer_storage.close: %s", e)
             pass
 
         # Destroy window last
         try:
             if root:
                 root.destroy()
-        except Exception:
+        except Exception as e:
+            logger.debug("Shutdown: root.destroy: %s", e)
             pass
 
-        print("[MAIN] Shutdown complete")
+        logger.info("Shutdown complete")
 
     
     # ========================================================================
@@ -504,10 +554,10 @@ def main():
     # ========================================================================
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
-    print("[MAIN] Starting UI...")
+    logger.info("Starting UI...")
     root.mainloop()
     
-    print("[MAIN] Application stopped")
+    logger.info("Application stopped")
 
 
 # ============================================================================

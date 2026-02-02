@@ -24,7 +24,7 @@ from typing import Optional, Tuple, List, Callable, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from observer_models import calculate_z_bin, generate_event_id
+from observer_models import calculate_z_bin, generate_event_id, SURVEY_AXIS_INDEX
 
 
 # =============================================================================
@@ -45,7 +45,7 @@ class CurrentContext:
     star_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # X, Y, Z coordinates
 
     # Derived values
-    z_bin: int = 0  # Calculated from star_pos[2]
+    z_bin: int = 0  # Calculated from star_pos[1] (journal Y, galactic height)
 
     # Last activity
     last_scan_body: Optional[str] = None
@@ -194,7 +194,7 @@ class JournalStateManager:
                 try:
                     x, y, z = float(star_pos[0]), float(star_pos[1]), float(star_pos[2])
                     self._star_pos = (x, y, z)
-                    self._z_bin = calculate_z_bin(z, self._z_bin_size)
+                    self._z_bin = calculate_z_bin(y, self._z_bin_size)
                 except (ValueError, TypeError):
                     pass
 
@@ -228,7 +228,7 @@ class JournalStateManager:
                 try:
                     x, y, z = float(star_pos[0]), float(star_pos[1]), float(star_pos[2])
                     self._star_pos = (x, y, z)
-                    self._z_bin = calculate_z_bin(z, self._z_bin_size)
+                    self._z_bin = calculate_z_bin(y, self._z_bin_size)
                 except (ValueError, TypeError):
                     pass
 
@@ -313,7 +313,7 @@ class JournalStateManager:
     def get_z_target(self) -> Dict[str, Any]:
         """Get current Z-target info for the overlay."""
         with self._lock:
-            current_z = self._star_pos[2]
+            current_z = self._star_pos[SURVEY_AXIS_INDEX]
             last = self._last_sample_z_bin
             direction = self._z_direction
             if last is not None:
@@ -388,14 +388,17 @@ class JournalStateManager:
         # Make copy of callbacks to avoid issues if callback modifies list
         callbacks = self._z_bin_callbacks.copy()
 
-        # Fire callbacks (outside lock to prevent deadlocks)
-        # Note: We release lock briefly for callbacks
-        for callback in callbacks:
-            try:
-                callback(event)
-            except Exception:
-                # Don't let callback errors break the state manager
-                pass
+        # Release lock before firing callbacks to prevent deadlocks
+        self._lock.release()
+        try:
+            for callback in callbacks:
+                try:
+                    callback(event)
+                except Exception:
+                    # Don't let callback errors break the state manager
+                    pass
+        finally:
+            self._lock.acquire()
 
     def get_z_bin_history(self) -> List[ZBinChangeEvent]:
         """

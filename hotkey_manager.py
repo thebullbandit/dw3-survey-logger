@@ -27,7 +27,10 @@ Design goals:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger("dw3.hotkey_manager")
 from typing import Callable, Optional, Tuple
 
 import re
@@ -85,8 +88,8 @@ class GlobalHotkey:
         if self._listener is not None:
             try:
                 self._listener.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Hotkey listener stop failed: %s", e)
 # ============================================================================
 # FUNCTIONS
 # ============================================================================
@@ -113,8 +116,8 @@ def try_register_global_hotkey(
     except Exception as e:
         try:
             handle.unregister()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Hotkey cleanup failed: %s", e)
         return None, HotkeyStatus(
             ok=False,
             mode="fallback",

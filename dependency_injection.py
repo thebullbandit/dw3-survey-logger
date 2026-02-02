@@ -21,6 +21,8 @@ from typing import Protocol, Optional
 import os
 import logging
 
+logger = logging.getLogger("dw3.dependency_injection")
+
 
 # ============================================================================
 # CONFIGURATION CLASSES
@@ -302,28 +304,32 @@ class FileLogger:
         """Ensure log directory exists"""
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to create log directory: %s", e)
             pass
 
     def log(self, message: str):
         """Log a message"""
         try:
             self._logger.info(message)
-        except Exception:
+        except Exception as e:
+            logger.debug("FileLogger.log failed: %s", e)
             pass
 
     def info(self, message: str):
         """Log info"""
         try:
             self._logger.info(message)
-        except Exception:
+        except Exception as e:
+            logger.debug("FileLogger.info failed: %s", e)
             pass
 
     def error(self, message: str):
         """Log an error"""
         try:
             self._logger.error(message)
-        except Exception:
+        except Exception as e:
+            logger.debug("FileLogger.error failed: %s", e)
             pass
 
 # ============================================================================
@@ -466,7 +472,7 @@ def create_view(container: DependencyContainer, root):
     Returns:
         Configured Earth2View instance
     """
-    from view import Earth2View
+    from ui import Earth2View
     
     return Earth2View(
         root=root,

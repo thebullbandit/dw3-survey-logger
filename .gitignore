@@ -13,10 +13,12 @@ venv/
 *.sqlite
 *.sqlite3
 *.log
+requirements-dev.txt
 logs/
 exports/
 output/
 data/
+tests/
 
 # OS / IDE
 .DS_Store
@@ -33,8 +35,4 @@ Thumbs.db
 dist/
 build/
 *.zip
-n u l 
 nul
-
- 
- 

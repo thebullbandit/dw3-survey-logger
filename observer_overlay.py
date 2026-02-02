@@ -35,8 +35,12 @@ from observer_models import (
     SamplingMethod,
     ObservationFlags,
     create_observation_from_context,
+    SURVEY_AXIS_INDEX,
 )
 from journal_state_manager import CurrentContext
+
+import logging
+logger = logging.getLogger("dw3.observer_overlay")
 
 
 # ============================================================================
@@ -78,7 +82,8 @@ class Tooltip:
         if self._after_id is not None:
             try:
                 self.widget.after_cancel(self._after_id)
-            except Exception:
+            except Exception as e:
+                logger.debug("Tooltip after_cancel failed: %s", e)
                 pass
             self._after_id = None
 
@@ -125,7 +130,8 @@ class Tooltip:
         if self._tipwin is not None:
             try:
                 self._tipwin.destroy()
-            except Exception:
+            except Exception as e:
+                logger.debug("Tooltip destroy failed: %s", e)
                 pass
             self._tipwin = None
 
@@ -266,12 +272,15 @@ class ObserverOverlay:
         self._populate_from_context()
         self._ensure_context_binding()
 
-        # Set initial compact size (width x height) - starts at minimum size
-        self.window.update_idletasks()  # Let the UI pack first
-        self.window.geometry("480x728")  
-        # Lock a sensible minimum size so status toggles can't shrink the window and hide buttons
-        self._base_width, self._base_height = 480, 728
-        self.window.minsize(self._base_width, self._base_height)
+        # Let Tk calculate the ideal size, use it as default but allow resizing smaller.
+        # The scrollable content area handles overflow if the user shrinks the window.
+        self.window.update_idletasks()
+        self._base_width = max(480, self.window.winfo_reqwidth())
+        ideal_height = self.window.winfo_reqheight()
+        self._base_height = ideal_height
+        self.window.geometry(f"{self._base_width}x{ideal_height}")
+        # Minimum allows shrinking — scrollbar kicks in when content overflows
+        self.window.minsize(self._base_width, 425)
 
         
         # Center on parent
@@ -284,6 +293,12 @@ class ObserverOverlay:
         """Hide/close the overlay"""
         self._remove_context_binding()
         if self.window is not None and self.window.winfo_exists():
+            try:
+                self.window.unbind_all("<MouseWheel>")
+                self.window.unbind_all("<Button-4>")
+                self.window.unbind_all("<Button-5>")
+            except Exception:
+                pass
             self.window.destroy()
         self.window = None
 
@@ -308,7 +323,8 @@ class ObserverOverlay:
             return
         try:
             self.parent.unbind("<<ObserverContextChanged>>", self._ctx_bind_id)
-        except Exception:
+        except Exception as e:
+            logger.debug("unbind ObserverContextChanged failed: %s", e)
             pass
         self._ctx_bind_id = None
 
@@ -319,8 +335,9 @@ class ObserverOverlay:
         if callable(self.get_context_fn):
             try:
                 self._context = self.get_context_fn()
-            except Exception:
+            except Exception as e:
                 # Never crash UI on a refresh failure; keep last known context.
+                logger.debug("get_context_fn failed on refresh: %s", e)
                 pass
         self._populate_from_context()
 
@@ -339,8 +356,8 @@ class ObserverOverlay:
         # Tk does not automatically inherit the root icon for Toplevel.
         self._load_icon_for_toplevel()
 
-        # Set minimum size - more compact
-        self.window.minsize(480, 425)  # Increased minimum height for better visibility
+        # Minimum size set dynamically in show() after UI is built
+        self.window.minsize(480, 425)
 
         # Keep it associated with the parent window, but DO NOT make it modal.
         # Modal (grab_set) can freeze the app if the game blocks the overlay from coming to front.
@@ -367,7 +384,8 @@ class ObserverOverlay:
                 # ASSET_PATH is typically a pathlib.Path
                 try:
                     icon_path = asset_path / icon_name
-                except Exception:
+                except Exception as e:
+                    logger.debug("Icon path join failed: %s", e)
                     icon_path = os.path.join(str(asset_path), icon_name)
 
             if icon_path:
@@ -376,7 +394,8 @@ class ObserverOverlay:
                     if hasattr(icon_path, "exists") and icon_path.exists():
                         self.window.iconbitmap(str(icon_path))
                         return
-                except Exception:
+                except Exception as e:
+                    logger.debug("iconbitmap (pathlib) failed: %s", e)
                     pass
 
                 # fallback for string path
@@ -384,9 +403,11 @@ class ObserverOverlay:
                     if isinstance(icon_path, str) and os.path.exists(icon_path):
                         self.window.iconbitmap(icon_path)
                         return
-                except Exception:
+                except Exception as e:
+                    logger.debug("iconbitmap (str) failed: %s", e)
                     pass
-        except Exception:
+        except Exception as e:
+            logger.debug("Icon load failed: %s", e)
             pass  # Icon is cosmetic; never break the overlay for it.
 
     def _center_on_parent(self):
@@ -437,11 +458,47 @@ class ObserverOverlay:
             "repeat_needed": tk.BooleanVar(value=False),
         }
 
-        # Main container with padding - reduced for compact layout
-        main_frame = tk.Frame(self.window, bg=self.colors.BG)
-        main_frame.pack(fill="both", expand=True, padx=8, pady=8)  # Reduced from 10,10
+        # Outer container
+        outer = tk.Frame(self.window, bg=self.colors.BG)
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
 
-        # Build sections
+        # Scrollable content area (canvas + scrollbar)
+        self._scroll_canvas = tk.Canvas(outer, bg=self.colors.BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(outer, orient="vertical", command=self._scroll_canvas.yview)
+        self._scroll_canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        self._scroll_canvas.pack(side="top", fill="both", expand=True)
+
+        # Inner frame inside the canvas for all content sections
+        main_frame = tk.Frame(self._scroll_canvas, bg=self.colors.BG)
+        self._scroll_window_id = self._scroll_canvas.create_window(
+            (0, 0), window=main_frame, anchor="nw"
+        )
+
+        # Keep canvas scroll region and inner frame width in sync
+        def _on_frame_configure(event):
+            self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            self._scroll_canvas.itemconfigure(self._scroll_window_id, width=event.width)
+
+        main_frame.bind("<Configure>", _on_frame_configure)
+        self._scroll_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Mouse wheel scrolling (Windows/macOS + Linux)
+        def _on_mousewheel(event):
+            self._scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            direction = -1 if event.num == 4 else 1
+            self._scroll_canvas.yview_scroll(direction, "units")
+
+        self._scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self._scroll_canvas.bind_all("<Button-4>", _on_mousewheel_linux)
+        self._scroll_canvas.bind_all("<Button-5>", _on_mousewheel_linux)
+
+        # Build sections inside scrollable area
         self._build_header(main_frame)
         self._build_z_target_section(main_frame)
         self._build_status_section(main_frame)
@@ -449,7 +506,9 @@ class ObserverOverlay:
         self._build_density_section(main_frame)
         self._build_flags_section(main_frame)
         self._build_notes_section(main_frame)
-        self._build_footer(main_frame)
+
+        # Footer pinned at bottom (outside scrollable area)
+        self._build_footer(outer)
 
         # Initially hide details (shown when status != in_progress)
         self._update_section_visibility()
@@ -495,23 +554,6 @@ class ObserverOverlay:
             bg=self.colors.BG_PANEL
         )
         self._lbl_system.grid(row=0, column=1, sticky="w", padx=(0, 20), pady=2)
-
-        tk.Label(
-            fields_frame,
-            text="Z-BIN:",
-            font=("Consolas", 9),
-            fg=self.colors.MUTED,
-            bg=self.colors.BG_PANEL
-        ).grid(row=0, column=2, sticky="e", padx=(0, 5), pady=2)
-
-        self._lbl_zbin = tk.Label(
-            fields_frame,
-            text="-",
-            font=("Consolas", 9, "bold"),
-            fg=self.colors.ORANGE,
-            bg=self.colors.BG_PANEL
-        )
-        self._lbl_zbin.grid(row=0, column=3, sticky="w", pady=2)
 
         # Row 2: Position
         tk.Label(
@@ -604,10 +646,30 @@ class ObserverOverlay:
         # Grid layout:
         #   col 0 = labels (right aligned)
         #   col 1 = values (stretch)
-        #   col 2 = a small progress panel (fixed)
+        #   col 2 = progress mini-panel (fixed)
+        #   col 3 = spacer (so progress isn't flush-right)
         inner.grid_columnconfigure(0, weight=0)
         inner.grid_columnconfigure(1, weight=1)
         inner.grid_columnconfigure(2, weight=0)
+        inner.grid_columnconfigure(3, weight=1)
+
+        # Row 0: Z-bin (moved here from CONTEXT so it sits with nav guidance)
+        tk.Label(
+            inner,
+            text="Z-BIN (Y):",
+            font=("Consolas", 9),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+        ).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=(0, 4))
+
+        self._lbl_zbin = tk.Label(
+            inner,
+            text="-",
+            font=("Consolas", 9, "bold"),
+            fg=self.colors.ORANGE,
+            bg=self.colors.BG_PANEL,
+        )
+        self._lbl_zbin.grid(row=0, column=1, sticky="w", pady=(0, 4))
 
         # Row 1: Current slice
         tk.Label(
@@ -616,7 +678,7 @@ class ObserverOverlay:
             font=("Consolas", 9),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
-        ).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=2)
+        ).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=2)
 
         self._lbl_current_z = tk.Label(
             inner,
@@ -625,7 +687,7 @@ class ObserverOverlay:
             fg=self.colors.TEXT,
             bg=self.colors.BG_PANEL,
         )
-        self._lbl_current_z.grid(row=0, column=1, sticky="w", pady=2)
+        self._lbl_current_z.grid(row=1, column=1, sticky="w", pady=2)
 
         # Row 2: Next slice
         tk.Label(
@@ -634,30 +696,18 @@ class ObserverOverlay:
             font=("Consolas", 9),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
-        ).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=2)
+        ).grid(row=2, column=0, sticky="e", padx=(0, 10), pady=2)
 
         self._lbl_target_z = tk.Label(
             inner,
             text="-",
             font=("Consolas", 9, "bold"),
-            fg=self.colors.ORANGE,  # Orange like Z-BIN in context
+            fg=self.colors.ORANGE,
             bg=self.colors.BG_PANEL,
         )
-        self._lbl_target_z.grid(row=1, column=1, sticky="w", pady=2)
+        self._lbl_target_z.grid(row=2, column=1, sticky="w", pady=2)
 
-        # Row 3: Jump instruction
-        self._lbl_jump_instruction = tk.Label(
-            inner,
-            text="Jump",
-            font=("Consolas", 9, "bold"),
-            fg=self.colors.TEXT,
-            bg=self.colors.BG_PANEL,
-            anchor="center",
-            justify="center",
-        )
-        self._lbl_jump_instruction.grid(row=2, column=0, columnspan=1, sticky="ew", pady=(8, 2))
-
-        # Right-side progress panel
+        # Progress mini-panel (moved inward by giving it a spacer column on the right)
         progress = tk.Frame(
             inner,
             bg=self.colors.BG_FIELD,
@@ -666,7 +716,7 @@ class ObserverOverlay:
             highlightthickness=1,
             highlightbackground=self.colors.BORDER_OUTER,
         )
-        progress.grid(row=0, column=2, rowspan=3, sticky="nsew", padx=(14, 0), pady=(0, 0))
+        progress.grid(row=0, column=2, rowspan=3, sticky="n", padx=(14, 0), pady=(0, 0))
 
         tk.Label(
             progress,
@@ -688,6 +738,9 @@ class ObserverOverlay:
 
         self._z_target_frame = z_frame
 
+
+    
+
     def _build_status_section(self, parent: tk.Frame):
         """Build slice status section (radio buttons)"""
         status_frame = tk.LabelFrame(
@@ -700,6 +753,7 @@ class ObserverOverlay:
             bd=2
         )
         status_frame.pack(fill="x", pady=(0, 4))
+        self._status_frame = status_frame
 
         # Radio buttons in a row
         radio_frame = tk.Frame(status_frame, bg=self.colors.BG_PANEL)
@@ -1238,7 +1292,7 @@ class ObserverOverlay:
 
         # Next Sample Location (simplified for users)
         try:
-            current_z = self._context.star_pos[2]
+            current_z = self._context.star_pos[SURVEY_AXIS_INDEX]
             last_sample_z_bin = getattr(self._context, "last_sample_z_bin", None)
             z_direction = getattr(self._context, "z_direction", 1)
 
@@ -1257,27 +1311,11 @@ class ObserverOverlay:
             arrow = "↑" if z_direction >= 1 else "↓"
             self._lbl_target_z.config(text=f"{target_z:,} {arrow}")
 
-            # Calculate remaining distance
-            remaining = abs(target_z - current_z)
-            
-            # Create jump instruction
-            direction_word = "upward" if z_direction >= 1 else "downward"
-            jump_text = f"Jump ~{int(remaining)} LY {direction_word}"
-            
-            # Color coding based on remaining distance
-            if remaining <= 10:
-                color = self.colors.GREEN
-            elif remaining <= 25:
-                color = self.colors.ORANGE
-            else:
-                color = self.colors.TEXT
-            
-            self._lbl_jump_instruction.config(text=jump_text, fg=color)
-            
             # Update sample count display
             self._update_sample_count()
-            
-        except Exception:
+
+        except Exception as e:
+            logger.debug("Z-target section update failed: %s", e)
             pass
 
     def _update_sample_count(self):
@@ -1300,25 +1338,19 @@ class ObserverOverlay:
             current_sample = counts['current_sample']
             current_systems = counts['current_systems']
             total_samples = counts['total_samples']
-            
+
             # Format the display text for the PROGRESS mini-panel.
-            # Use a 2-line layout so it reads like its own section.
-            if total_samples > 0:
-                count_text = (
-                    f"Sample: #{current_sample}\n"
-                    f"System: #{current_systems}\n"
-                    f"Total:  {total_samples}"
-                )
-            else:
-                count_text = (
-                    f"Sample: #{current_sample}\n"
-                    f"System: #{current_systems}"
-                )
+            count_text = (
+                f"Sample: #{current_sample}\n"
+                f"System: #{current_systems}\n"
+                f"Total:  {total_samples}"
+            )
             
             self._lbl_sample_count.config(text=count_text)
             
-        except Exception:
+        except Exception as e:
             # If there's any error, just show a dash
+            logger.debug("Sample count update failed: %s", e)
             self._lbl_sample_count.config(text="-")
 
     def _update_section_visibility(self):
@@ -1329,7 +1361,8 @@ class ObserverOverlay:
         try:
             cur_w = self.window.winfo_width()
             cur_h = self.window.winfo_height()
-        except Exception:
+        except Exception as e:
+            logger.debug("Window size query failed: %s", e)
             cur_w = getattr(self, "_base_width", 480)
             cur_h = getattr(self, "_base_height", 728)
 
@@ -1339,21 +1372,13 @@ class ObserverOverlay:
         else:
             self._details_frame.pack_forget()
 
-        # Re-apply size (and enforce minimum + required height) after pack/forget changes
+        # Update scroll region after showing/hiding sections
         try:
             self.window.update_idletasks()
-            min_w = getattr(self, "_base_width", 480)
-            min_h = getattr(self, "_base_height", 728)
-
-            # If we just revealed extra UI (Complete/Partial/Discard), ensure the window grows
-            # enough for the footer (Save/Cancel) to remain visible.
-            req_h = self.window.winfo_reqheight()
-
-            new_w = max(cur_w, min_w)
-            new_h = max(cur_h, min_h, req_h)
-
-            self.window.geometry(f"{new_w}x{new_h}")
-        except Exception:
+            if hasattr(self, "_scroll_canvas"):
+                self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        except Exception as e:
+            logger.debug("Window geometry update failed: %s", e)
             pass
 
         # Note: Density sampling section is always visible (main data entry fields)
@@ -1361,13 +1386,8 @@ class ObserverOverlay:
 
     def _get_status_frame(self) -> tk.Widget:
         """Get the status section frame for pack ordering"""
-        # Find the status LabelFrame
-        for child in self.window.winfo_children():
-            for subchild in child.winfo_children():
-                if isinstance(subchild, tk.LabelFrame):
-                    title = subchild.cget("text")
-                    if title == "SLICE STATUS":
-                        return subchild
+        if hasattr(self, "_status_frame"):
+            return self._status_frame
         return self._details_frame  # Fallback
 
     def _on_confidence_changed(self, *args):
@@ -1423,14 +1443,16 @@ class ObserverOverlay:
         # Update the sample counter display after successful save
         try:
             self._update_sample_count()
-        except Exception:
+        except Exception as e:
+            logger.debug("Post-save sample count update failed: %s", e)
             pass
 
         # If the CMDR completed the slice, unlock so the next save starts a new splice sample.
         try:
             if note.slice_status == SliceStatus.COMPLETE:
                 self._locked_z_bin = None
-        except Exception:
+        except Exception as e:
+            logger.debug("Post-save z_bin unlock failed: %s", e)
             pass
 
         # Don't close overlay after save - let user decide when to close
@@ -1457,7 +1479,8 @@ class ObserverOverlay:
         try:
             cur_w = self.window.winfo_width()
             cur_h = self.window.winfo_height()
-        except Exception:
+        except Exception as e:
+            logger.debug("Validate window size query failed: %s", e)
             cur_w = getattr(self, "_base_width", 480)
             cur_h = getattr(self, "_base_height", 728)
 

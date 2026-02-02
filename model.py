@@ -10,9 +10,12 @@ No UI dependencies - pure business logic.
 # IMPORTS
 # ============================================================================
 
+import logging
 import time
 import json
 import threading
+
+logger = logging.getLogger("dw3.model")
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
@@ -470,8 +473,7 @@ class Earth2Model:
     
     def _log_error(self, message: str):
         """Log error message (can be expanded to write to log file)"""
-        print(f"[MODEL ERROR] {message}")
-        # Could also write to file here
+        logger.error(message)
     
     def reset_session_stats(self):
         """Reset session statistics"""

@@ -1,4 +1,4 @@
-# DW3 Survey Logger v0.9.13
+# DW3 Survey Logger v0.9.14
 
 ## Project Status
 
@@ -9,7 +9,7 @@ https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Known Issues (v0.9.13)
+## Known Issues (v0.9.14)
 
 None
 
@@ -88,12 +88,12 @@ No data is uploaded or shared automatically. Everything remains local on your ma
 The Observer Overlay shows your next sampling target while surveying.
 
 It displays:
-- **Current Z** - Your current Z coordinate
-- **Target Z-bin** - The next z-bin to aim for
-- **Distance** - Rounded distance in plain language (e.g. "Jump ~65 LY upward")
-- **Direction** - Arrows indicating upward or downward, auto-detected based on your last two samples
+- **Z-BIN (Y)** - Your current z-bin
+- **Current slice** - The slice you are currently in
+- **Next slice** - The next z-bin to aim for, with direction arrow (↑/↓)
+- **Progress** - Current sample number, system count, and total completed samples
 
-The overlay refreshes context automatically on every hotkey press, including after jumping to a new system. Direction is set automatically after your second saved sample. No manual configuration needed.
+Progress persists across app restarts. Direction is auto-detected after your second saved sample. No manual configuration needed.
 
 ---
 
@@ -182,6 +182,7 @@ The options menu (accessed via the Options dropdown button) allows you to:
 - **Hotkey Settings** - Configure observer overlay hotkey
 - **Import All Journals** - Bulk import historical journal data
 - **Backup Database** - Quick database backup export
+- **Reset Observer Progress** - Reset all sample progress to zero (data is preserved, not deleted)
 
 The main Options dialog lets you:
 - Select journal and output folders
@@ -249,6 +250,16 @@ This limitation is expected at this stage of development.
 
 ## Patch Notes
 
+### v0.9.14
+- Fixed: Sample progress now persists across app restarts instead of resetting to zero
+- Fixed: Observation window bottom clipping on Linux - window height now adapts to actual font rendering
+- Fixed: Removed stale "Jump ~XX LY upward" line from Next Sample Location panel
+- Fixed: Density Excel export now writes the actual CMDR name to the sheet instead of using the template default
+- Improved: Observation window is now scrollable and resizable - users can shrink the window without losing the Save/Cancel buttons
+- Improved: Removed 20-system-per-sample limit - users can now scan as many systems as they want per sample
+- Added: Reset Observer Progress option in the Options menu (soft-reset, data preserved in database)
+- Added: Cache cleanup on startup to prevent stale bytecode issues after updates
+
 ### v0.9.13
 - Fixed: Sample index counter bug - Sample runs now correctly increment (1, 2, 3...) instead of staying at 1
 - Fixed: Excel coordinate order - Columns now ordered as X-Y-Z instead of X-Z-Y for consistency
@@ -271,7 +282,7 @@ This limitation is expected at this stage of development.
 
 ## Versioning Note
 
-Recent releases focused primarily on internal stability and correctness.  
+Recent releases focused primarily on internal stability.  
 Version numbering will stabilize once core behavior is fully locked in.
 
 ---
@@ -285,14 +296,14 @@ It is a community-built tool provided as-is.
 
 ## Feedback & Contributions
 
-Bug reports and suggestions are welcome via GitHub Issues or Discord.  
+Bug reports and suggestions are welcome via GitHub Issues. 
 Please include logs and steps to reproduce where possible.
 
 ---
 
 ## Acknowledgements
 
-- CMDRs testing early builds 
+- CMDRs testing early builds o7
 - The DW3 expedition community
 - Stellar Density Scan Worksheet created by CMDR Satsuma
 - Distant Radio 33.05
