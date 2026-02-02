@@ -504,7 +504,7 @@ class ObserverOverlay:
         self._build_status_section(main_frame)
         self._build_details_section(main_frame)
         self._build_density_section(main_frame)
-        self._build_flags_section(main_frame)
+       #self._build_flags_section(main_frame)
         self._build_notes_section(main_frame)
 
         # Footer pinned at bottom (outside scrollable area)
@@ -911,7 +911,7 @@ class ObserverOverlay:
 
         self._tooltips.append(Tooltip(
             self._method_combo,
-            "How you sampled this slice. Random = wander, Grid = systematic passes, Route Follow = along your plotted hops, Targeted = chasing specific stars, Other = anything else.",
+            "How you sampled this slice. Random = wander, Grid = systematic passes, Route Follow = along your plotted jumps, Targeted = chasing specific stars, Other = anything else.",
             delay_ms=1200
         ))
 
@@ -949,7 +949,6 @@ class ObserverOverlay:
         # Grid layout for inputs
         fields = [
             ("System Count:", self._system_count_var, "Raw count from the nav panel"),
-            ("Corrected n:", self._corrected_n_var, "Auto: system count + 1"),
             ("Max Distance:", self._max_distance_var, "Search radius in LY"),
         ]
 
@@ -982,22 +981,13 @@ class ObserverOverlay:
                     "From the left Nav panel: the raw system count for this star. (Not a galaxy map estimate.)",
                     delay_ms=1200
                 ))
-            elif label.lower().startswith("corrected"):
-                self._tooltips.append(Tooltip(
-                    entry,
-                    "Calculated automatically from System Count.\n"
-                    "The Nav panel does not include your current system, so the logger adds +1 to get the correct N.",
-                    delay_ms=1200
-                ))
             elif label.lower().startswith("max distance"):
                 self._tooltips.append(Tooltip(
                     entry,
-                    "The search radius (in LY) you used when counting. Use the project’s agreed radius so everyone matches.",
+                    "Distance (in LY) to the nearest neighbouring star system.",
                     delay_ms=1200
                 ))
 
-            if label.lower().startswith("corrected"):
-                entry.configure(state="readonly")
 
             tk.Label(
                 inner,

@@ -101,7 +101,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.14",
+        "VERSION": "0.9.15",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",

@@ -1,7 +1,7 @@
 [![Version](https://img.shields.io/github/v/release/thebullbandit/dw3-survey-logger)](https://github.com/thebullbandit/dw3-survey-logger/releases)
 [![License](https://img.shields.io/github/license/thebullbandit/dw3-survey-logger)](LICENSE)
 
-# DW3 Survey Logger v0.9.14
+# DW3 Survey Logger v0.9.15
 
 ## Project Status
 
@@ -12,7 +12,7 @@ https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734
 
 Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
 
-## Known Issues (v0.9.14)
+## Known Issues (v0.9.15)
 
 None
 
@@ -252,6 +252,11 @@ This limitation is expected at this stage of development.
 ---
 
 ## Patch Notes
+
+### v0.9.15
+- Changed: "Flags" section is now hidden to reduce UI clutter.
+- Changed: Removed visible Corrected n field from Observation, value is still calculated in the background.
+- Improved: Updated the Max Distance tooltip
 
 ### v0.9.14
 - Fixed: Sample progress now persists across app restarts instead of resetting to zero
