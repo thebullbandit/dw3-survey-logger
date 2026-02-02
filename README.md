@@ -1,5 +1,3 @@
-# DW3 Survey Logger
-
 [![Version](https://img.shields.io/github/v/release/thebullbandit/dw3-survey-logger)](https://github.com/thebullbandit/dw3-survey-logger/releases)
 [![License](https://img.shields.io/github/license/thebullbandit/dw3-survey-logger)](LICENSE)
 
