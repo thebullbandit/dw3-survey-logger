@@ -149,6 +149,9 @@ class ObserverNote:
     corrected_n: Optional[int] = None               # User-adjusted count (avoids zero, stabilizes calc)
     max_distance: Optional[float] = None            # Search radius in LY
 
+    # === CMDR-input: Boxel size survey ===
+    boxel_highest_system: str = ""                  # Highest-numbered system in current boxel (optional)
+
     # === CMDR-input: Flags and notes ===
     flags: ObservationFlags = field(default_factory=ObservationFlags)
     notes: str = ""                                 # Free-form text
@@ -193,6 +196,7 @@ class ObserverNote:
             "system_count": self.system_count,
             "corrected_n": self.corrected_n,
             "max_distance": self.max_distance,
+            "boxel_highest_system": self.boxel_highest_system,
             "flags": self.flags.to_dict(),
             "notes": self.notes,
             "supersedes_id": self.supersedes_id,
@@ -268,9 +272,9 @@ class ObserverNote:
         if self.system_count is not None and self.system_count < 0:
             errors.append("System count must be non-negative")
 
-        # Max distance should be positive if set
-        if self.max_distance is not None and self.max_distance <= 0:
-            errors.append("Max distance must be positive")
+        # Max distance should be non-negative if set
+        if self.max_distance is not None and self.max_distance < 0:
+            errors.append("Max distance must be non-negative")
 
         return (len(errors) == 0, errors)
 
@@ -334,10 +338,10 @@ def create_observation_from_context(
         star_pos = tuple(star_pos)
 
     return ObserverNote(
-        event_id=context.get('event_id', ''),
+        event_id=context.get('event_id') or '',
         timestamp_utc=datetime.now(timezone.utc).isoformat(),
         system_address=context.get('system_address'),
-        system_name=context.get('system_name', ''),
+        system_name=context.get('system_name') or '',
         star_pos=star_pos,
         z_bin=calculate_z_bin(star_pos[SURVEY_AXIS_INDEX]) if star_pos else 0,
         session_id=session_id,

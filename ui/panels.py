@@ -300,6 +300,12 @@ def build_comms_drawer(view, parent: tk.Widget) -> tk.Frame:
     scrollbar.pack(side="right", fill="y")
     txt.config(yscrollcommand=scrollbar.set)
 
+    # Color tags for comms messages
+    txt.tag_configure("error", foreground=colors["RED"])
+    txt.tag_configure("success", foreground=colors["GREEN"])
+    txt.tag_configure("warning", foreground=colors["ORANGE"])
+    txt.tag_configure("link", foreground="#5599ff", underline=True)
+
     view.widgets["txt_comms"] = txt
 
     view._apply_comms_state(initial=True)
@@ -329,6 +335,12 @@ def build_comms_panel(view, parent: tk.Widget):
                         yscrollcommand=scrollbar.set)
     txt_comms.pack(fill="both", expand=True, padx=5, pady=5)
     scrollbar.config(command=txt_comms.yview)
+
+    # Color tags for comms messages
+    txt_comms.tag_configure("error", foreground=colors["RED"])
+    txt_comms.tag_configure("success", foreground=colors["GREEN"])
+    txt_comms.tag_configure("warning", foreground=colors["ORANGE"])
+    txt_comms.tag_configure("link", foreground="#5599ff", underline=True)
 
     view.widgets["txt_comms"] = txt_comms
 

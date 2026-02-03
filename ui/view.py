@@ -45,6 +45,7 @@ class Earth2View:
         self.on_export_csv: Optional[Callable] = None
         self.on_export_db: Optional[Callable] = None
         self.on_export_density_xlsx: Optional[Callable] = None
+        self.on_export_boxel_xlsx: Optional[Callable] = None
         self.on_export_all: Optional[Callable] = None
         self.on_export_diagnostics: Optional[Callable] = None
         self.on_rescan: Optional[Callable] = None
@@ -331,7 +332,8 @@ class Earth2View:
         export_menu.add_separator()
         export_menu.add_command(label="CSV", command=self._on_export_csv_clicked)
         export_menu.add_command(label="Database", command=self._on_export_db_clicked)
-        export_menu.add_command(label="Density XLSX", command=self._on_export_density_xlsx_clicked)
+        export_menu.add_command(label="Density Sheet", command=self._on_export_density_xlsx_clicked)
+        export_menu.add_command(label="Boxel Sheet", command=self._on_export_boxel_xlsx_clicked)
         export_btn.config(menu=export_menu)
         export_btn.pack(side="left", padx=3)
 
@@ -558,7 +560,13 @@ class Earth2View:
                 "alltime"
             )
 
+    _URL_RE = None  # compiled on first use
+
     def update_comms(self, messages: List[str]):
+        import re
+        if self._URL_RE is None:
+            Earth2View._URL_RE = re.compile(r'(https?://\S+)')
+
         comms_text = "\n".join(messages) if messages else ""
         if self._ui_cache.get("comms") != comms_text:
             self._ui_cache["comms"] = comms_text
@@ -566,12 +574,49 @@ class Earth2View:
                 at_bottom = self.widgets["txt_comms"].yview()[1] >= 0.99
             except Exception:
                 at_bottom = True
-            self.widgets["txt_comms"].config(state="normal")
-            self.widgets["txt_comms"].delete("1.0", "end")
-            self.widgets["txt_comms"].insert("1.0", comms_text)
-            self.widgets["txt_comms"].config(state="disabled")
+            txt = self.widgets["txt_comms"]
+            txt.config(state="normal")
+            txt.delete("1.0", "end")
+            for i, line in enumerate(messages or []):
+                if i > 0:
+                    txt.insert("end", "\n")
+                line_tag = self._comms_tag_for_line(line)
+                # Split line on URLs so links get their own clickable tag
+                parts = self._URL_RE.split(line)
+                for part in parts:
+                    if self._URL_RE.fullmatch(part):
+                        # Create a unique tag per URL for the click binding
+                        url_tag = f"url_{id(part)}_{i}"
+                        txt.tag_configure(url_tag, foreground="#5599ff", underline=True)
+                        txt.tag_bind(url_tag, "<Button-1>", lambda e, u=part: self._open_url(u))
+                        txt.tag_bind(url_tag, "<Enter>", lambda e: txt.config(cursor="hand2"))
+                        txt.tag_bind(url_tag, "<Leave>", lambda e: txt.config(cursor=""))
+                        tags = (url_tag,)
+                    else:
+                        tags = (line_tag,) if line_tag else ()
+                    txt.insert("end", part, tags)
+            txt.config(state="disabled")
             if at_bottom:
-                self.widgets["txt_comms"].see("end")
+                txt.see("end")
+
+    @staticmethod
+    def _open_url(url: str):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _comms_tag_for_line(line: str) -> str:
+        """Return a tag name based on the message prefix, or empty string."""
+        upper = line.upper()
+        if "[ERROR]" in upper or "ERROR]" in upper or "[✗]" in upper:
+            return "error"
+        if "[WARNING]" in upper or "[WARN]" in upper:
+            return "warning"
+        if "[✓]" in upper or "SAVED" in upper or "EXPORTED" in upper or "EDITED" in upper:
+            return "success"
+        return ""
 
     def update_footer(self, total_all: int, total_elw: int, total_terraformable: int):
         if total_all == 0:
@@ -749,6 +794,10 @@ class Earth2View:
     def _on_export_density_xlsx_clicked(self):
         if self.on_export_density_xlsx:
             self.on_export_density_xlsx()
+
+    def _on_export_boxel_xlsx_clicked(self):
+        if self.on_export_boxel_xlsx:
+            self.on_export_boxel_xlsx()
 
     def _on_export_all_clicked(self):
         if self.on_export_all:

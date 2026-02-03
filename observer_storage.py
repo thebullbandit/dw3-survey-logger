@@ -105,6 +105,7 @@ class ObserverStorage:
 
         # Create tables and indexes
         self._create_tables()
+        self._create_boxel_table()
 
         # Upgrade from schema v1 → v2 (wrong survey axis)
         self._upgrade_v1_to_v2()
@@ -188,6 +189,12 @@ class ObserverStorage:
         except sqlite3.OperationalError:
             pass
 
+        # Add boxel_highest_system column for existing databases (best effort)
+        try:
+            self.conn.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN boxel_highest_system TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
         # Index for sample_index (useful for ordering)
         try:
             self.conn.execute(
@@ -196,6 +203,78 @@ class ObserverStorage:
         except sqlite3.OperationalError:
             pass
 
+
+    def _create_boxel_table(self):
+        """Create boxel_entries table for boxel size survey data"""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS boxel_entries (
+                id TEXT PRIMARY KEY,
+                created_at_utc TEXT NOT NULL,
+                cmdr_name TEXT NOT NULL DEFAULT '',
+                system_name TEXT NOT NULL DEFAULT '',
+                system_address INTEGER,
+                star_pos_x REAL,
+                star_pos_y REAL,
+                star_pos_z REAL,
+                boxel_highest_system TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                record_status TEXT NOT NULL DEFAULT 'active'
+            )
+        """)
+        # Migration: add record_status to existing boxel_entries tables
+        try:
+            self.conn.execute("ALTER TABLE boxel_entries ADD COLUMN record_status TEXT NOT NULL DEFAULT 'active'")
+            self.conn.commit()
+        except Exception:
+            pass  # column already exists
+
+    def save_boxel_entry(self, entry: dict) -> str:
+        """Save a boxel size survey entry.
+
+        Args:
+            entry: dict with keys: cmdr_name, system_name, system_address,
+                   star_pos (tuple), boxel_highest_system, session_id
+
+        Returns:
+            The entry ID
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        entry_id = str(uuid.uuid4())
+        star_pos = entry.get("star_pos") or (None, None, None)
+        try:
+            x, y, z = star_pos
+        except Exception:
+            x = y = z = None
+
+        with self._lock:
+            self.conn.execute("""
+                INSERT INTO boxel_entries (
+                    id, created_at_utc, cmdr_name, system_name, system_address,
+                    star_pos_x, star_pos_y, star_pos_z,
+                    boxel_highest_system, session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                entry_id,
+                datetime.now(timezone.utc).isoformat(),
+                entry.get("cmdr_name", ""),
+                entry.get("system_name", ""),
+                entry.get("system_address"),
+                x, y, z,
+                entry.get("boxel_highest_system", ""),
+                entry.get("session_id", ""),
+            ))
+        return entry_id
+
+    def get_boxel_entries(self) -> list:
+        """Return all active boxel entries as list of dicts."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "SELECT * FROM boxel_entries WHERE record_status = 'active' ORDER BY created_at_utc"
+            )
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def _upgrade_v1_to_v2(self):
         """Back up and discard v1 data (wrong survey axis: used Z instead of Y)."""
@@ -472,9 +551,10 @@ class ObserverStorage:
                 system_count, corrected_n, max_distance,
                 sample_index,
                 system_index,
+                boxel_highest_system,
                 supersedes_id, record_status,
                 payload_json, payload_hash, prev_hash, schema_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             note.id,
             note.created_at_utc,
@@ -490,6 +570,7 @@ class ObserverStorage:
             note.max_distance,
             note.sample_index,
             getattr(note, 'system_index', None),
+            getattr(note, 'boxel_highest_system', ''),
             note.supersedes_id,
             note.record_status.value,
             note.to_json(),
@@ -758,6 +839,20 @@ class ObserverStorage:
         with self._lock:
             cursor = self.conn.execute(f"""
                 UPDATE {self.TABLE_NAME}
+                SET record_status = 'reset'
+                WHERE record_status = 'active'
+            """)
+            self.conn.commit()
+            return cursor.rowcount
+
+    def reset_boxel_entries(self) -> int:
+        """Soft-delete all active boxel entries, resetting boxel progress to 0.
+
+        Returns the number of records affected.
+        """
+        with self._lock:
+            cursor = self.conn.execute("""
+                UPDATE boxel_entries
                 SET record_status = 'reset'
                 WHERE record_status = 'active'
             """)

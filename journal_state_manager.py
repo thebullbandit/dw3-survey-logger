@@ -59,6 +59,11 @@ class CurrentContext:
     # Z-target tracking (for Next Z Target indicator)
     last_sample_z_bin: Optional[int] = None
     z_direction: int = 1  # +1 for +Z, -1 for -Z
+    z_direction_known: bool = False  # True after travel direction detected
+
+    # Next locked target (from FSDTarget / NavRoute)
+    target_system_name: Optional[str] = None
+    target_star_pos: Optional[Tuple[float, float, float]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for ObserverNote creation"""
@@ -141,6 +146,12 @@ class JournalStateManager:
         # Z-target tracking
         self._last_sample_z_bin: Optional[int] = None
         self._z_direction: int = 1  # +1 for +Z, -1 for -Z
+        self._z_direction_known: bool = False  # True after first Y-change detected
+        self._prev_y: Optional[float] = None  # previous Y for direction detection
+
+        # Next locked target
+        self._target_system_name: Optional[str] = None
+        self._target_star_pos: Optional[Tuple[float, float, float]] = None
 
         # Callbacks for Z-bin changes
         self._z_bin_callbacks: List[Callable[[ZBinChangeEvent], None]] = []
@@ -193,6 +204,15 @@ class JournalStateManager:
             if isinstance(star_pos, list) and len(star_pos) == 3:
                 try:
                     x, y, z = float(star_pos[0]), float(star_pos[1]), float(star_pos[2])
+
+                    # Auto-detect travel direction from Y delta
+                    if self._prev_y is not None:
+                        dy = y - self._prev_y
+                        if abs(dy) > 1.0:  # ignore trivial lateral drift
+                            self._z_direction = 1 if dy > 0 else -1
+                            self._z_direction_known = True
+                    self._prev_y = y
+
                     self._star_pos = (x, y, z)
                     self._z_bin = calculate_z_bin(y, self._z_bin_size)
                 except (ValueError, TypeError):
@@ -202,8 +222,10 @@ class JournalStateManager:
             self._system_name = event.get('StarSystem', self._system_name)
             self._system_address = event.get('SystemAddress', self._system_address)
 
-            # Clear last scan body (we're in a new system)
+            # Clear last scan body and target (we've arrived)
             self._last_scan_body = None
+            self._target_system_name = None
+            self._target_star_pos = None
 
             # Update event tracking
             self._last_event_id = generate_event_id(event)
@@ -229,6 +251,9 @@ class JournalStateManager:
                     x, y, z = float(star_pos[0]), float(star_pos[1]), float(star_pos[2])
                     self._star_pos = (x, y, z)
                     self._z_bin = calculate_z_bin(y, self._z_bin_size)
+                    # Seed prev_y so first FSD jump can detect direction
+                    if self._prev_y is None:
+                        self._prev_y = y
                 except (ValueError, TypeError):
                     pass
 
@@ -264,6 +289,12 @@ class JournalStateManager:
             if name:
                 self._cmdr_name = name
 
+    def on_fsd_target(self, system_name: str, star_pos: Optional[Tuple[float, float, float]]):
+        """Update the next locked target system (from FSDTarget + NavRoute)."""
+        with self._lock:
+            self._target_system_name = system_name
+            self._target_star_pos = star_pos
+
     # =========================================================================
     # CONTEXT ACCESS (called by UI)
     # =========================================================================
@@ -290,6 +321,9 @@ class JournalStateManager:
                 cmdr_name=self._cmdr_name,
                 last_sample_z_bin=self._last_sample_z_bin,
                 z_direction=self._z_direction,
+                z_direction_known=self._z_direction_known,
+                target_system_name=self._target_system_name,
+                target_star_pos=self._target_star_pos,
             )
 
     # =========================================================================
@@ -304,6 +338,7 @@ class JournalStateManager:
             # Auto-detect direction if we have a previous sample
             if old is not None and z_bin != old:
                 self._z_direction = 1 if z_bin > old else -1
+                self._z_direction_known = True
 
     def set_z_direction(self, direction: int):
         """Set Z direction: +1 for +Z, -1 for -Z."""
@@ -426,4 +461,6 @@ class JournalStateManager:
             self._last_event_timestamp = None
             self._session_id = None
             self._cmdr_name = None
+            self._prev_y = None
+            self._z_direction_known = False
             self._z_bin_history.clear()

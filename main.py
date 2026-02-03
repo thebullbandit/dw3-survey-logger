@@ -17,10 +17,12 @@ for _cache_dir in _app_dir.rglob("__pycache__"):
 # ============================================================================
 
 import logging
+import threading
 import tkinter as tk
 from utils import resource_path
 import sys
 import json
+import urllib.request
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +39,7 @@ from journal_monitor import JournalMonitor
 from journal_state_manager import JournalStateManager
 from observer_storage import ObserverStorage
 from observer_overlay import ObserverOverlay
-from observer_models import ObserverNote
+from observer_models import ObserverNote, SliceStatus
 
 
 # ============================================================================
@@ -101,7 +103,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.15",
+        "VERSION": "0.9.16",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -119,7 +121,7 @@ def get_config() -> dict:
 
         # Monitoring settings
         "POLL_SECONDS_FAST": 0.1,
-        "POLL_SECONDS_SLOW": 0.25,
+        "POLL_SECONDS_SLOW": 0.5,
         "TEST_MODE": False,
         "TEST_READ_FROM_START": True,
 
@@ -332,13 +334,22 @@ def main():
                     logger.debug("set_last_sample_z_bin failed: %s", e)
                     pass
 
+                # Friendly status labels for comms
+                _status_labels = {
+                    SliceStatus.IN_PROGRESS: "Sample in Progress",
+                    SliceStatus.COMPLETE: "Density Sample Complete o7",
+                    SliceStatus.PARTIAL: "Sample Partial",
+                    SliceStatus.DISCARD: "Sample Discarded",
+                }
+                status_text = _status_labels.get(note.slice_status, note.slice_status.value)
+
                 if note.sample_index is not None:
                     presenter.add_comms_message(
-                        f"[OBSERVER] Saved: {note.slice_status.value} | Sample #{note.sample_index} | System #{note.system_index}"
+                        f"[OBSERVER] Density sample saved: Sample #{note.sample_index} | System #{note.system_index} | {status_text}"
                     )
                 else:
                     presenter.add_comms_message(
-                        f"[OBSERVER] Saved: {note.slice_status.value}"
+                        f"[OBSERVER] Density sample saved: {status_text}"
                     )
 
                 logger.info("Observation saved with ID: %s", note_id)
@@ -370,6 +381,33 @@ def main():
         except Exception as e:
             logger.debug("Failed to report overlay error to comms: %s", e)
             pass
+
+    def on_boxel_saved(entry: dict):
+        """Save a boxel entry to the separate boxel table."""
+        try:
+            if not observer_storage:
+                presenter.add_comms_message("[OBSERVER ERROR] Storage not available for boxel save")
+                return
+            cmdr = (model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
+            entry["cmdr_name"] = cmdr
+            observer_storage.save_boxel_entry(entry)
+            presenter.add_comms_message(f"[OBSERVER] Boxel entry saved: {entry.get('boxel_highest_system', '')}")
+        except Exception as e:
+            presenter.add_comms_message(f"[OBSERVER ERROR] Boxel save failed: {e}")
+
+    def on_observation_edited(note: ObserverNote):
+        """Callback when observation is edited/amended from overlay"""
+        if note.sample_index is not None:
+            presenter.add_comms_message(
+                f"[OBSERVER] Sample #{note.sample_index} edited successfully"
+            )
+        else:
+            presenter.add_comms_message("[OBSERVER] Observation edited successfully")
+
+    if observer_overlay is not None:
+        observer_overlay.on_save_boxel = on_boxel_saved
+        observer_overlay.on_export = presenter.handle_export_density_xlsx
+        observer_overlay.on_edit = on_observation_edited
 
     def open_observer_overlay():
         """Open the observer overlay with current context"""
@@ -460,7 +498,29 @@ def main():
     presenter.add_comms_message("[SYSTEM] Journal monitor active")
     presenter.add_comms_message(f"[SYSTEM] Observer system active ({hotkey_hint_text or 'hotkey unavailable'})")
     presenter.add_comms_message("[SYSTEM] Scanning for journal files...")
-    
+
+    # Check for updates in background
+    def _check_for_update():
+        repo = "thebullbandit/dw3-survey-logger"
+        current = config.get("VERSION", "0.0.0")
+        try:
+            url = f"https://api.github.com/repos/{repo}/releases/latest"
+            req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "DW3-Survey-Logger"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "").lstrip("vV")
+            if latest and latest != current:
+                link = data.get("html_url", f"https://github.com/{repo}/releases/latest")
+                presenter.add_comms_message(
+                    f"[UPDATE] New version v{latest} available! {link}"
+                )
+            else:
+                presenter.add_comms_message(f"[UPDATE] v{current} is up to date.")
+        except Exception as e:
+            logger.debug("Update check failed: %s", e)
+
+    threading.Thread(target=_check_for_update, daemon=True).start()
+
     # Set initial status
     presenter.update_scan_status("INITIALIZING")
     

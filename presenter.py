@@ -46,6 +46,7 @@ class Earth2Presenter:
         self.view.on_export_csv = self.handle_export_csv
         self.view.on_export_db = self.handle_export_db
         self.view.on_export_density_xlsx = self.handle_export_density_xlsx
+        self.view.on_export_boxel_xlsx = self.handle_export_boxel_xlsx
         self.view.on_export_all = self.handle_export_all
         self.view.on_export_diagnostics = self.handle_export_diagnostics
         self.view.on_rescan = self.handle_rescan
@@ -514,8 +515,28 @@ class Earth2Presenter:
                     import traceback
                     traceback.print_exc()
 
+                # 4. Export Boxel Sheet XLSX
+                try:
+                    if not self.observer_storage:
+                        self.model.add_comms_message("[✗] Observer storage not available (Boxel sheet skipped)")
+                    else:
+                        from boxel_sheet_exporter import export_boxel_sheet
+                        boxel_entries = self.observer_storage.get_boxel_entries()
+                        boxel_result = export_boxel_sheet(
+                            boxel_entries,
+                            export_dir,
+                            cmdr_name=cmdr,
+                        )
+                        if boxel_result:
+                            self.model.add_comms_message(f"[✓] Boxel sheet exported: {boxel_result.name}")
+                            export_count += 1
+                        else:
+                            self.model.add_comms_message("[✗] No boxel data to export (Boxel sheet skipped)")
+                except Exception as e:
+                    self.model.add_comms_message(f"[✗] Boxel sheet export failed: {e}")
+
                 # Summary
-                self.model.add_comms_message(f"[SYSTEM] Export complete: {export_count}/3 files exported to {export_dir}")
+                self.model.add_comms_message(f"[SYSTEM] Export complete: {export_count} files exported to {export_dir}")
 
             # Run in background thread
             threading.Thread(target=export_thread, daemon=True).start()
@@ -688,6 +709,58 @@ class Earth2Presenter:
 
 
 
+
+    def handle_export_boxel_xlsx(self):
+        """Handle Boxel Sheet XLSX export request"""
+        try:
+            from pathlib import Path
+            import threading
+            from tkinter import filedialog
+
+            if not self.observer_storage:
+                self.model.add_comms_message("[OBSERVER] No observer DB available (boxel export disabled).")
+                return
+
+            # Ask user to select export folder
+            initial_dir = self.config.get("EXPORT_DIR") or self.config.get("OUTDIR") or str(Path.home() / "Documents")
+            export_dir = filedialog.askdirectory(
+                title="Select Export Folder for Boxel Sheet",
+                initialdir=initial_dir,
+                parent=self.view.root
+            )
+
+            if not export_dir:
+                return
+
+            export_dir = Path(export_dir)
+            self.config["EXPORT_DIR"] = str(export_dir)
+
+            self.model.add_comms_message("[SYSTEM] Starting boxel sheet export...")
+
+            def export_thread():
+                try:
+                    from boxel_sheet_exporter import export_boxel_sheet
+
+                    entries = self.observer_storage.get_boxel_entries()
+                    cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
+
+                    result = export_boxel_sheet(
+                        entries,
+                        export_dir,
+                        cmdr_name=cmdr,
+                    )
+
+                    if result:
+                        self.model.add_comms_message(f"[SYSTEM] Boxel sheet exported: {result.name}")
+                    else:
+                        self.model.add_comms_message("[INFO] No boxel data to export. Enter a highest system in the observation overlay first.")
+                except Exception as e:
+                    self.model.add_comms_message(f"[ERROR] Boxel sheet export failed: {e}")
+
+            threading.Thread(target=export_thread, daemon=True).start()
+
+        except Exception as e:
+            self.model.add_comms_message(f"[ERROR] Boxel sheet export error: {e}")
 
     def handle_rescan(self):
         """Handle rescan current journal request"""
@@ -911,7 +984,7 @@ class Earth2Presenter:
             self.model.add_comms_message(f"[ERROR] Options failed: {e}")
 
     def handle_reset_observer_progress(self):
-        """Reset all observer sample progress after user confirmation."""
+        """Reset all observer sample + boxel progress after user confirmation."""
         try:
             from tkinter import messagebox
             if not self.observer_storage:
@@ -919,67 +992,46 @@ class Earth2Presenter:
                 return
             confirmed = messagebox.askyesno(
                 "Reset Observer Progress",
-                "This will reset all observer sample progress to 0.\n\n"
-                "Your data is not deleted — records are marked as reset "
-                "and can be recovered from the database.\n\n"
-                "Are you sure?",
+                "This will reset ALL observer data back to 0:\n\n"
+                "  • Density sample progress (all samples)\n"
+                "  • Boxel size survey entries\n\n"
+                "Your data is NOT permanently deleted, records\n"
+                "are marked as 'reset' and can be recovered\n"
+                "from the database if needed.\n\n"
+                "Are you sure you want to reset?",
             )
             if not confirmed:
                 return
-            count = self.observer_storage.reset_sample_progress()
-            self.model.add_comms_message(f"[OPTIONS] Observer progress reset ({count} records).")
+            obs_count = self.observer_storage.reset_sample_progress()
+            boxel_count = self.observer_storage.reset_boxel_entries()
+            self.model.add_comms_message(
+                f"[OPTIONS] Observer progress reset ({obs_count} samples, {boxel_count} boxel entries)."
+            )
         except Exception as e:
             logger.error("Failed to reset observer progress: %s", e)
             self.model.add_comms_message(f"[OPTIONS] Failed to reset progress: {e}")
 
     def handle_about(self):
-        """Handle About dialog (includes copyable diagnostics)."""
+        """Handle About dialog."""
         try:
-            from pathlib import Path
-            import os
-
-            db_path = self.config.get("DB_PATH", "")
-            outdir = self.config.get("OUTDIR", "")
-            export_dir = self.config.get("EXPORT_DIR", "")
-            journal_dir = self.config.get("JOURNAL_DIR", "")
-            settings_path = self.config.get("BOOTSTRAP_SETTINGS_PATH", "")
-
-            def _size(p: str) -> str:
-                try:
-                    pp = Path(p)
-                    if pp.exists():
-                        return f"{pp.stat().st_size} bytes"
-                except Exception as e:
-                    logger.debug("_size stat failed: %s", e)
-                    pass
-                return "-"
+            version = self.config.get("VERSION", "")
 
             about_text = "\n".join([
-                "DW3 Earth2 Logger Beta\n",
-                "Local-first: stores data in SQLite on your machine (no uploads).",
-                "\nPaths:",
-                f"  OUTDIR:      {outdir}",
-                f"  Export dir:  {export_dir}",
-                f"  DB:          {db_path}",
-                f"  Journals:    {journal_dir}",
-                f"  Settings:    {settings_path}",
-                "\nNotes:",
-                "- If something looks odd, use 'Copy diagnostics' and paste it into Discord.",
+                f"DW3 Survey Logger v{version} (Beta)\n",
+                "by CMDR Frank Elgyn\n",
+                "A companion tool for the Distant Worlds 3 expedition.",
+                "Tracks Earth-like world candidates, stellar density",
+                "sampling, and boxel size survey data.\n",
+                "All data is stored locally, nothing is uploaded.\n",
+                "Features:",
+                "  - Real-time journal monitoring",
+                "  - Earth Similarity and Goldilocks scoring",
+                "  - Density Sheet and Boxel Sheet exports",
+                "  - Observer overlay with global hotkey support\n",
+                "               Fly Safe CMDR o7",
             ])
 
-            diagnostics = "\n".join([
-                f"app={self.config.get('APP_NAME','')}",
-                f"version={self.config.get('VERSION','')}",
-                f"outdir={outdir}",
-                f"export_dir={export_dir}",
-                f"db_path={db_path}",
-                f"db_size={_size(str(db_path))}",
-                f"journal_dir={journal_dir}",
-                f"settings_path={settings_path}",
-                f"python={os.sys.version.split()[0]}",
-            ])
-
-            self.view.show_about_dialog(about_text, copy_text=diagnostics)
+            self.view.show_about_dialog(about_text)
         except Exception as e:
             logger.error("About: %s", e, exc_info=True)
 

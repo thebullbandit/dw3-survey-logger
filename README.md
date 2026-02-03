@@ -1,7 +1,7 @@
 [![Version](https://img.shields.io/github/v/release/thebullbandit/dw3-survey-logger)](https://github.com/thebullbandit/dw3-survey-logger/releases)
 [![License](https://img.shields.io/github/license/thebullbandit/dw3-survey-logger)](LICENSE)
 
-# DW3 Survey Logger v0.9.15
+# DW3 Survey Logger v0.9.16
 
 ## Project Status
 
@@ -10,9 +10,9 @@ It was created to support **DW3 expeditions**.
 
 https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734/
 
-Because development is ongoing and iterative, **bugs and rough edges should be expected**. The focus so far has been functionality and data integrity rather than polish.
+Because development is ongoing, **bugs and rough edges should be expected**.
 
-## Known Issues (v0.9.15)
+## Known Issues (v0.9.16)
 
 None
 
@@ -252,6 +252,14 @@ This limitation is expected at this stage of development.
 ---
 
 ## Patch Notes
+
+### v0.9.16
+- Added: Quick "Export" button added to the Add Observation footer so you can export density worksheets without leaving the overlay.
+- Fixed: Observation window bottom clipping on Linux - window height now adapts to actual font rendering
+- Fixed: The Add Observation window saves its size when closed and restores on next open/restart.
+- Added: Next Slice Y now detects whether you're travelling up or down from your actual jumps. (Active after first jump)
+- Added: A hint appears after saving your 20th Denisity sample, reminding you to save one more to complete the sample.
+- Added: "Stellar Properties Boxel Size Survey" Added by request.  
 
 ### v0.9.15
 - Changed: "Flags" section is now hidden to reduce UI clutter.

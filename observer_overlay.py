@@ -23,9 +23,11 @@ Matches the existing app styling (dark theme, Consolas font).
 #   - Section dividers below are comments only (no logic changes).
 # ============================================================================
 
+import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
+from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Tuple
 from dataclasses import dataclass
 
@@ -41,6 +43,8 @@ from journal_state_manager import CurrentContext
 
 import logging
 logger = logging.getLogger("dw3.observer_overlay")
+
+_SETTINGS_PATH = Path.home() / ".dw3_survey_logger" / "settings.json"
 
 
 # ============================================================================
@@ -184,6 +188,7 @@ class ObserverOverlay:
         config: Dict[str, Any],
         get_context_fn: Optional[Callable[[], CurrentContext]] = None,
         on_save: Optional[Callable[[ObserverNote], None]] = None,
+        on_export: Optional[Callable[[], None]] = None,
         session_id: str = "",
         app_version: str = "",
         observer_storage=None
@@ -204,6 +209,9 @@ class ObserverOverlay:
         self.get_context_fn = get_context_fn
         self._ctx_bind_id = None
         self.on_save = on_save
+        self.on_export = on_export
+        self.on_edit: Optional[Callable[[ObserverNote], None]] = None
+        self.on_save_boxel: Optional[Callable[[Dict[str, Any]], None]] = None
         self.session_id = session_id
         self.app_version = app_version
         self.observer_storage = observer_storage
@@ -225,6 +233,12 @@ class ObserverOverlay:
         # so system_index counts up across multiple saved systems.
         self._locked_z_bin: Optional[int] = None
 
+        # Edit mode: when set, Save will amend this note instead of creating new
+        self._editing_note_id: Optional[str] = None
+
+        # Duplicate guard: track last saved system to prevent accidental double-saves
+        self._last_saved_system_address: Optional[int] = None
+
         # Tkinter variables
         self._slice_status_var: Optional[tk.StringVar] = None
         self._confidence_var: Optional[tk.IntVar] = None
@@ -232,6 +246,7 @@ class ObserverOverlay:
         self._system_count_var: Optional[tk.StringVar] = None
         self._corrected_n_var: Optional[tk.StringVar] = None
         self._max_distance_var: Optional[tk.StringVar] = None
+        self._boxel_highest_system_var: Optional[tk.StringVar] = None
         self._notes_widget: Optional[tk.Text] = None
 
         # Flag variables
@@ -272,14 +287,23 @@ class ObserverOverlay:
         self._populate_from_context()
         self._ensure_context_binding()
 
-        # Let Tk calculate the ideal size, use it as default but allow resizing smaller.
-        # The scrollable content area handles overflow if the user shrinks the window.
+        # Let Tk calculate the ideal size so all sections are visible on open.
+        # The scrollable content area handles overflow if the user shrinks later.
         self.window.update_idletasks()
         self._base_width = max(480, self.window.winfo_reqwidth())
-        ideal_height = self.window.winfo_reqheight()
+        ideal_height = self.window.winfo_reqheight() + 20  # small buffer for footer
+        # Cap to screen height so it never opens larger than the display
+        screen_h = self.window.winfo_screenheight()
+        ideal_height = min(ideal_height, int(screen_h * 0.85))
         self._base_height = ideal_height
-        self.window.geometry(f"{self._base_width}x{ideal_height}")
-        # Minimum allows shrinking — scrollbar kicks in when content overflows
+
+        # Restore saved window size if available, otherwise use ideal
+        saved_w, saved_h = self._load_window_size()
+        if saved_w and saved_h:
+            self.window.geometry(f"{saved_w}x{saved_h}")
+        else:
+            self.window.geometry(f"{self._base_width}x{ideal_height}")
+        # Allow shrinking — scrollbar kicks in when content overflows
         self.window.minsize(self._base_width, 425)
 
         
@@ -293,6 +317,13 @@ class ObserverOverlay:
         """Hide/close the overlay"""
         self._remove_context_binding()
         if self.window is not None and self.window.winfo_exists():
+            # Persist window size for next launch
+            try:
+                w = self.window.winfo_width()
+                h = self.window.winfo_height()
+                self._save_window_size(w, h)
+            except Exception as e:
+                logger.debug("Failed to save window size: %s", e)
             try:
                 self.window.unbind_all("<MouseWheel>")
                 self.window.unbind_all("<Button-4>")
@@ -305,6 +336,32 @@ class ObserverOverlay:
     def is_visible(self) -> bool:
         """Check if overlay is currently visible"""
         return self.window is not None and self.window.winfo_exists()
+
+    def _save_window_size(self, width: int, height: int):
+        """Persist overlay window size to settings.json."""
+        try:
+            data = {}
+            if _SETTINGS_PATH.exists():
+                data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
+            data["overlay_width"] = width
+            data["overlay_height"] = height
+            _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.debug("_save_window_size failed: %s", e)
+
+    def _load_window_size(self) -> Tuple[Optional[int], Optional[int]]:
+        """Load saved overlay window size from settings.json."""
+        try:
+            if _SETTINGS_PATH.exists():
+                data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
+                w = data.get("overlay_width")
+                h = data.get("overlay_height")
+                if isinstance(w, int) and isinstance(h, int) and w >= 480 and h >= 425:
+                    return w, h
+        except Exception as e:
+            logger.debug("_load_window_size failed: %s", e)
+        return None, None
 
     def _ensure_context_binding(self):
         """Bind to context-change events while overlay is visible."""
@@ -332,6 +389,7 @@ class ObserverOverlay:
         """Refresh overlay context when the app notifies new journal/state data."""
         if self.window is None or (hasattr(self.window, "winfo_exists") and not self.window.winfo_exists()):
             return
+        old_addr = self._context.system_address if self._context else None
         if callable(self.get_context_fn):
             try:
                 self._context = self.get_context_fn()
@@ -339,6 +397,10 @@ class ObserverOverlay:
                 # Never crash UI on a refresh failure; keep last known context.
                 logger.debug("get_context_fn failed on refresh: %s", e)
                 pass
+        # Clear duplicate guard when we arrive at a new system
+        new_addr = self._context.system_address if self._context else None
+        if new_addr is not None and new_addr != old_addr:
+            self._last_saved_system_address = None
         self._populate_from_context()
 
     # =========================================================================
@@ -375,37 +437,14 @@ class ObserverOverlay:
     def _load_icon_for_toplevel(self):
         """Apply the same icon as the main window to this Toplevel (best-effort)."""
         try:
-            # Config follows the same convention as view.py
-            icon_name = self.config.get("ICON_NAME") or self.config.get("icon_name") or "earth2.ico"
+            icon_name = self.config.get("ICON_NAME") or "earth2.ico"
             asset_path = self.config.get("ASSET_PATH")
+            if not asset_path:
+                return
 
-            icon_path = None
-            if asset_path:
-                # ASSET_PATH is typically a pathlib.Path
-                try:
-                    icon_path = asset_path / icon_name
-                except Exception as e:
-                    logger.debug("Icon path join failed: %s", e)
-                    icon_path = os.path.join(str(asset_path), icon_name)
-
-            if icon_path:
-                # pathlib.Path support
-                try:
-                    if hasattr(icon_path, "exists") and icon_path.exists():
-                        self.window.iconbitmap(str(icon_path))
-                        return
-                except Exception as e:
-                    logger.debug("iconbitmap (pathlib) failed: %s", e)
-                    pass
-
-                # fallback for string path
-                try:
-                    if isinstance(icon_path, str) and os.path.exists(icon_path):
-                        self.window.iconbitmap(icon_path)
-                        return
-                except Exception as e:
-                    logger.debug("iconbitmap (str) failed: %s", e)
-                    pass
+            icon_path = Path(str(asset_path)) / icon_name
+            if icon_path.exists():
+                self.window.iconbitmap(default=str(icon_path))
         except Exception as e:
             logger.debug("Icon load failed: %s", e)
             pass  # Icon is cosmetic; never break the overlay for it.
@@ -443,6 +482,7 @@ class ObserverOverlay:
         self._system_count_var = tk.StringVar(value="")
         self._corrected_n_var = tk.StringVar(value="")
         self._max_distance_var = tk.StringVar(value="")
+        self._boxel_highest_system_var = tk.StringVar(value="")
 
         # Auto-calculate corrected_n (N = system_count + 1)
         self._system_count_var.trace_add("write", self._update_corrected_n)
@@ -505,6 +545,7 @@ class ObserverOverlay:
         self._build_details_section(main_frame)
         self._build_density_section(main_frame)
        #self._build_flags_section(main_frame)
+        self._build_boxel_section(main_frame)
         self._build_notes_section(main_frame)
 
         # Footer pinned at bottom (outside scrollable area)
@@ -546,14 +587,30 @@ class ObserverOverlay:
             bg=self.colors.BG_PANEL
         ).grid(row=0, column=0, sticky="e", padx=(0, 5), pady=2)
 
+        system_row = tk.Frame(fields_frame, bg=self.colors.BG_PANEL)
+        system_row.grid(row=0, column=1, columnspan=3, sticky="w", pady=2)
+
         self._lbl_system = tk.Label(
-            fields_frame,
+            system_row,
             text="-",
             font=("Consolas", 9, "bold"),
             fg=self.colors.TEXT,
-            bg=self.colors.BG_PANEL
+            bg=self.colors.BG_PANEL,
+            cursor="hand2"
         )
-        self._lbl_system.grid(row=0, column=1, sticky="w", padx=(0, 20), pady=2)
+        self._lbl_system.pack(side="left")
+        self._lbl_system.bind("<Button-1>", self._copy_system_name)
+
+        self._lbl_copy_hint = tk.Label(
+            system_row,
+            text="click to copy",
+            font=("Consolas", 8, "italic"),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+            cursor="hand2"
+        )
+        self._lbl_copy_hint.pack(side="left", padx=(6, 0))
+        self._lbl_copy_hint.bind("<Button-1>", self._copy_system_name)
 
         # Row 2: Position
         tk.Label(
@@ -656,7 +713,7 @@ class ObserverOverlay:
         # Row 0: Z-bin (moved here from CONTEXT so it sits with nav guidance)
         tk.Label(
             inner,
-            text="Z-BIN (Y):",
+            text="Actual Y:",
             font=("Consolas", 9),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
@@ -671,10 +728,10 @@ class ObserverOverlay:
         )
         self._lbl_zbin.grid(row=0, column=1, sticky="w", pady=(0, 4))
 
-        # Row 1: Current slice
+        # Row 1: Next target Y
         tk.Label(
             inner,
-            text="Current slice:",
+            text="Next Target Y:",
             font=("Consolas", 9),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
@@ -692,7 +749,7 @@ class ObserverOverlay:
         # Row 2: Next slice
         tk.Label(
             inner,
-            text="Next slice:",
+            text="Next Slice Y:",
             font=("Consolas", 9),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
@@ -997,6 +1054,83 @@ class ObserverOverlay:
                 bg=self.colors.BG_PANEL
             ).grid(row=idx, column=2, sticky="w", padx=(10, 0), pady=3)
 
+    def _build_boxel_section(self, parent: tk.Frame):
+        """Build boxel size survey section (optional highest-numbered system)"""
+        boxel_frame = tk.LabelFrame(
+            parent,
+            text="BOXEL SIZE (optional)",
+            font=("Consolas", 10, "bold"),
+            fg=self.colors.ORANGE,
+            bg=self.colors.BG_PANEL,
+            relief="ridge",
+            bd=2
+        )
+        boxel_frame.pack(fill="x", pady=(0, 4))
+
+        tk.Label(
+            boxel_frame,
+            text="For the Stellar Properties survey: enter the highest-numbered system in your current boxel.",
+            font=("Consolas", 8),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL,
+            wraplength=440,
+            justify="left",
+        ).pack(anchor="w", padx=10, pady=(6, 0))
+
+        inner = tk.Frame(boxel_frame, bg=self.colors.BG_PANEL)
+        inner.pack(fill="x", padx=8, pady=6)
+
+        tk.Label(
+            inner,
+            text="Highest System:",
+            font=("Consolas", 9),
+            fg=self.colors.MUTED,
+            bg=self.colors.BG_PANEL
+        ).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=3)
+
+        entry = tk.Entry(
+            inner,
+            textvariable=self._boxel_highest_system_var,
+            font=("Consolas", 9),
+            fg=self.colors.TEXT,
+            bg=self.colors.BG_FIELD,
+            insertbackground=self.colors.TEXT,
+            relief="solid",
+            bd=1,
+            width=30
+        )
+        entry.grid(row=0, column=1, sticky="w", pady=3)
+
+        btn_save_boxel = tk.Button(
+            inner,
+            text="Save Boxel",
+            font=("Consolas", 9),
+            bg="#3a5f8a",
+            fg="#d0d8e8",
+            activebackground="#4a7aaa",
+            activeforeground="#ffffff",
+            command=self._on_save_boxel,
+            width=12,
+            cursor="hand2"
+        )
+        btn_save_boxel.grid(row=0, column=2, sticky="w", padx=(10, 0), pady=3)
+
+        self._boxel_status_lbl = tk.Label(
+            inner,
+            text="",
+            font=("Consolas", 8),
+            fg=self.colors.GREEN,
+            bg=self.colors.BG_PANEL
+        )
+        self._boxel_status_lbl.grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 2))
+
+        self._tooltips.append(Tooltip(
+            entry,
+            "Use Galaxy Map binary search to find the highest-numbered system "
+            "in your boxel. Example: Eactainds LF-A d27",
+            delay_ms=1200
+        ))
+
     def _build_flags_section(self, parent: tk.Frame):
         """Build flags section (checkboxes)"""
         flags_frame = tk.LabelFrame(
@@ -1221,14 +1355,30 @@ class ObserverOverlay:
         )
         btn_save.pack(side="right")
 
-        # Shortcut hint
-        tk.Label(
+        # Edit Last button
+        btn_edit_last = tk.Button(
             footer,
-            text="Ctrl+Enter to save, Esc to cancel",
-            font=("Consolas", 8),
-            fg=self.colors.MUTED,
-            bg=self.colors.BG
-        ).pack(side="left")
+            text="Edit Last",
+            font=("Consolas", 9),
+            bg=self.colors.BG_PANEL,
+            fg=self.colors.ORANGE,
+            command=self._on_edit_last,
+            width=12
+        )
+        btn_edit_last.pack(side="left")
+
+        # Export button
+        btn_export = tk.Button(
+            footer,
+            text="Export",
+            font=("Consolas", 9),
+            bg=self.colors.BG_PANEL,
+            fg=self.colors.GREEN,
+            command=self._on_export,
+            width=12
+        )
+        btn_export.pack(side="left", padx=(10, 0))
+        self._tooltips.append(Tooltip(btn_export, "Export Density Sheet", delay_ms=800))
 
     # =========================================================================
     # UI UPDATES
@@ -1243,9 +1393,14 @@ class ObserverOverlay:
         system = self._context.system_name or "-"
         self._lbl_system.config(text=system)
 
-        # Z-bin
+        # Actual Y coordinate from game
+        try:
+            actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
+            self._lbl_zbin.config(text=f"{actual_y:,.2f}" if actual_y is not None else "-")
+        except (TypeError, IndexError):
+            self._lbl_zbin.config(text="-")
+
         z_bin = self._context.z_bin
-        self._lbl_zbin.config(text=str(z_bin) if z_bin else "-")
 
         # Slice lock logic:
         # If the CMDR is saving multiple "in_progress" splice notes across different systems,
@@ -1282,24 +1437,26 @@ class ObserverOverlay:
 
         # Next Sample Location (simplified for users)
         try:
-            current_z = self._context.star_pos[SURVEY_AXIS_INDEX]
-            last_sample_z_bin = getattr(self._context, "last_sample_z_bin", None)
             z_direction = getattr(self._context, "z_direction", 1)
+            z_direction_known = getattr(self._context, "z_direction_known", False)
+            actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
 
-            # Current slice - just show the z-bin value
-            current_slice = self._context.z_bin
-            self._lbl_current_z.config(text=f"{current_slice:,}")
-
-            # Calculate target slice
-            if last_sample_z_bin is not None:
-                target_z = last_sample_z_bin + (50 * z_direction)
+            # Next Target Y - show the locked target's Y coordinate
+            target_pos = getattr(self._context, "target_star_pos", None)
+            if target_pos is not None:
+                target_y = target_pos[SURVEY_AXIS_INDEX]
+                self._lbl_current_z.config(text=f"{target_y:,.2f}")
             else:
-                # No sample yet — use current z_bin + step
-                target_z = self._context.z_bin + (50 * z_direction)
+                self._lbl_current_z.config(text="-")
 
-            # Next slice with direction arrow
-            arrow = "↑" if z_direction >= 1 else "↓"
-            self._lbl_target_z.config(text=f"{target_z:,} {arrow}")
+            # Next slice = actual Y +/- 50 in the detected travel direction
+            # Only show after direction is detected (at least 1 jump)
+            if z_direction_known:
+                next_slice_y = actual_y + (50 * z_direction)
+                arrow = "\u2191" if z_direction >= 1 else "\u2193"
+                self._lbl_target_z.config(text=f"{next_slice_y:,.2f} {arrow}")
+            else:
+                self._lbl_target_z.config(text="(jump to detect)")
 
             # Update sample count display
             self._update_sample_count()
@@ -1319,10 +1476,13 @@ class ObserverOverlay:
                 self._lbl_sample_count.config(text="-")
                 return
             
+            # Use locked z_bin if set, otherwise current context z_bin
+            z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
+
             # Get sample counts from observer storage
             counts = self.observer_storage.get_sample_counts(
                 self._context.session_id,
-                self._context.z_bin
+                z_bin
             )
             
             current_sample = counts['current_sample']
@@ -1342,6 +1502,29 @@ class ObserverOverlay:
             # If there's any error, just show a dash
             logger.debug("Sample count update failed: %s", e)
             self._lbl_sample_count.config(text="-")
+
+    def _check_sample_hint(self):
+        """Show a hint exactly once when the current sample reaches 20 systems."""
+        try:
+            if not self.observer_storage or not self._context or self._context.z_bin is None:
+                return
+            z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
+            counts = self.observer_storage.get_sample_counts(
+                self._context.session_id, z_bin
+            )
+            current_systems = counts.get("current_systems", 0)
+            # Build a key so we only show the hint once per sample
+            hint_key = (self._context.session_id, z_bin, counts.get("current_sample", 0))
+            if current_systems == 20 and hint_key != getattr(self, "_last_hint_key", None):
+                self._last_hint_key = hint_key
+                messagebox.showinfo(
+                    "Sample Hint",
+                    "[HINT] 20 systems logged! Save one more to complete "
+                    "the sample (21 total), then export.",
+                    parent=self.window,
+                )
+        except Exception as e:
+            logger.debug("_check_sample_hint failed: %s", e)
 
     def _update_section_visibility(self):
         """Show/hide sections based on status selection"""
@@ -1380,6 +1563,24 @@ class ObserverOverlay:
             return self._status_frame
         return self._details_frame  # Fallback
 
+    def _copy_system_name(self, event=None):
+        """Copy system name to clipboard"""
+        name = self._lbl_system.cget("text")
+        if name and name != "-":
+            try:
+                self.window.clipboard_clear()
+                self.window.clipboard_append(name)
+                # Brief visual feedback
+                original_fg = self._lbl_system.cget("fg")
+                self._lbl_system.config(fg=self.colors.GREEN)
+                self._lbl_copy_hint.config(text="copied!", fg=self.colors.GREEN)
+                def _restore():
+                    self._lbl_system.config(fg=original_fg)
+                    self._lbl_copy_hint.config(text="click to copy", fg=self.colors.MUTED)
+                self.window.after(800, _restore)
+            except Exception as e:
+                logger.debug("Clipboard copy failed: %s", e)
+
     def _on_confidence_changed(self, *args):
         """Update confidence label when slider changes"""
         value = self._confidence_var.get()
@@ -1405,6 +1606,20 @@ class ObserverOverlay:
 
     def _on_save(self):
         """Handle save button click"""
+        # Duplicate guard: warn if saving the same system twice in a row
+        current_addr = self._context.system_address if self._context else None
+        if (current_addr is not None
+                and current_addr == self._last_saved_system_address
+                and not self._editing_note_id):
+            system_name = (self._context.system_name or "this system") if self._context else "this system"
+            if not messagebox.askyesno(
+                "Duplicate Warning",
+                f"You already saved an observation for {system_name}.\n\n"
+                "Save another entry for the same system?",
+                parent=self.window,
+            ):
+                return
+
         # Validate
         is_valid, errors = self._validate()
         if not is_valid:
@@ -1418,8 +1633,23 @@ class ObserverOverlay:
         # Build ObserverNote
         note = self._build_note()
 
-        # Call save callback
-        if self.on_save:
+        # Amend existing note or save new
+        if self._editing_note_id and self.observer_storage:
+            try:
+                self.observer_storage.amend(self._editing_note_id, note)
+                self._editing_note_id = None
+                self.window.title("Add Observation")
+                # Notify presenter of successful edit
+                if callable(self.on_edit):
+                    self.on_edit(note)
+            except Exception as e:
+                messagebox.showerror(
+                    "Amend Error",
+                    f"Failed to amend observation:\n{e}",
+                    parent=self.window
+                )
+                return
+        elif self.on_save:
             try:
                 self.on_save(note)
             except Exception as e:
@@ -1433,6 +1663,8 @@ class ObserverOverlay:
         # Update the sample counter display after successful save
         try:
             self._update_sample_count()
+            # Check if system count hit 20 — nudge CMDR to complete the sample
+            self._check_sample_hint()
         except Exception as e:
             logger.debug("Post-save sample count update failed: %s", e)
             pass
@@ -1445,9 +1677,76 @@ class ObserverOverlay:
             logger.debug("Post-save z_bin unlock failed: %s", e)
             pass
 
+        # Record last saved system for duplicate guard
+        self._last_saved_system_address = current_addr
+
+        # Reset fields for new input
+        self._clear_fields()
+
         # Don't close overlay after save - let user decide when to close
         # User can press ESC or click X to close manually
         # self.hide()  # Commented out - window stays open after save
+
+    def _clear_fields(self):
+        """Reset form fields to defaults after a successful save."""
+        self._editing_note_id = None
+        self.window.title("Add Observation")
+        self._slice_status_var.set(SliceStatus.IN_PROGRESS.value)
+        self._confidence_var.set(50)
+        self._method_var.set(SamplingMethod.OTHER.value)
+        self._system_count_var.set("")
+        self._max_distance_var.set("")
+        for var in self._flag_vars.values():
+            var.set(False)
+        self._notes_widget.delete("1.0", "end")
+
+    def _on_save_boxel(self):
+        """Handle Save Boxel button click"""
+        boxel_val = self._boxel_highest_system_var.get().strip()
+        if not boxel_val:
+            self._boxel_status_lbl.config(text="Enter a system name first", fg=self.colors.RED)
+            return
+
+        if self.on_save_boxel:
+            try:
+                context_dict = self._context.to_dict() if self._context else {}
+                entry = {
+                    "cmdr_name": "",  # filled by presenter from model
+                    "system_name": context_dict.get("system_name", ""),
+                    "system_address": context_dict.get("system_address"),
+                    "star_pos": context_dict.get("star_pos", (0.0, 0.0, 0.0)),
+                    "boxel_highest_system": boxel_val,
+                    "session_id": self.session_id,
+                }
+                self.on_save_boxel(entry)
+                self._boxel_status_lbl.config(text="Saved!", fg=self.colors.GREEN)
+                self._boxel_highest_system_var.set("")
+            except Exception as e:
+                self._boxel_status_lbl.config(text=f"Error: {e}", fg=self.colors.RED)
+        else:
+            self._boxel_status_lbl.config(text="Save not available", fg=self.colors.RED)
+
+    def _on_edit_last(self):
+        """Load the most recent observation into the form for editing."""
+        if not self.observer_storage:
+            messagebox.showinfo("Edit", "Storage not available.", parent=self.window)
+            return
+        try:
+            notes = self.observer_storage.get_active(limit=1)
+            if not notes:
+                messagebox.showinfo("Edit", "No saved observations to edit.", parent=self.window)
+                return
+            last_note = notes[0]
+            self.show_for_edit(last_note)
+        except Exception as e:
+            messagebox.showerror("Edit Error", f"Failed to load last observation:\n{e}", parent=self.window)
+
+    def _on_export(self):
+        """Handle export button click - delegates to presenter callback"""
+        if callable(self.on_export):
+            self.on_export()
+        else:
+            messagebox.showinfo("Export", "Export not available.", parent=self.window)
 
     def _on_cancel(self):
         """Handle cancel button click"""
@@ -1494,8 +1793,8 @@ class ObserverOverlay:
         if max_distance:
             try:
                 val = float(max_distance)
-                if val <= 0:
-                    errors.append("Max distance must be positive")
+                if val < 0:
+                    errors.append("Max distance must be non-negative")
             except ValueError:
                 errors.append("Max distance must be a number")
 
@@ -1573,8 +1872,12 @@ class ObserverOverlay:
             session_id=note.session_id,
         )
 
+        # Track edit mode
+        self._editing_note_id = note.id
+
         # Show window
         self.show(context)
+        self.window.title("Edit Observation")
 
         # Populate form with note data
         self._slice_status_var.set(note.slice_status.value)
@@ -1595,6 +1898,10 @@ class ObserverOverlay:
             self._corrected_n_var.set(str(note.corrected_n))
         if note.max_distance is not None:
             self._max_distance_var.set(str(note.max_distance))
+
+        # Boxel highest system
+        if getattr(note, 'boxel_highest_system', ''):
+            self._boxel_highest_system_var.set(note.boxel_highest_system)
 
         # Flags
         self._flag_vars["bias_risk"].set(note.flags.bias_risk)

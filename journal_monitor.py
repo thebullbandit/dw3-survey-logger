@@ -244,6 +244,7 @@ class EventProcessor:
         self.on_scan: Optional[Callable[[Dict], None]] = None
         self.on_saa_complete: Optional[Callable[[Dict], None]] = None
         self.on_fsd_jump: Optional[Callable[[Dict], None]] = None
+        self.on_fsd_target: Optional[Callable[[Dict], None]] = None
     
     def parse_line(self, line: str) -> Optional[Dict[str, Any]]:
         """
@@ -315,7 +316,13 @@ class EventProcessor:
             if self.on_saa_complete:
                 self.on_saa_complete(evt)
                 return True
-        
+
+        # FSD Target lock
+        elif event_type == "FSDTarget":
+            if self.on_fsd_target:
+                self.on_fsd_target(evt)
+                return True
+
         return False
     
     def get_stats(self) -> Dict[str, int]:
@@ -387,7 +394,8 @@ class JournalMonitor:
 
         # Polling intervals
         self.poll_fast = config.get("POLL_SECONDS_FAST", 0.1)
-        self.poll_slow = config.get("POLL_SECONDS_SLOW", 0.25)
+        self.poll_slow = config.get("POLL_SECONDS_SLOW", 0.5)
+        self.idle_backoff_threshold = 2.0  # seconds without data before slowing down
 
     
     def _setup_event_handlers(self):
@@ -397,6 +405,7 @@ class JournalMonitor:
         self.event_processor.on_scan = self._handle_scan
         self.event_processor.on_saa_complete = self._handle_saa_complete
         self.event_processor.on_fsd_jump = self._handle_fsd_jump
+        self.event_processor.on_fsd_target = self._handle_fsd_target
     
     # ========================================================================
     # EVENT HANDLERS
@@ -473,6 +482,36 @@ class JournalMonitor:
                 logger.debug("notify_observer_context_changed failed: %s", e)
                 pass
     
+    def _handle_fsd_target(self, evt: Dict[str, Any]):
+        """Handle FSDTarget event — CMDR locked a system in the galaxy map."""
+        target_name = evt.get("Name", "")
+        star_pos = None
+
+        # Read NavRoute.json to get the target's StarPos
+        try:
+            nav_route_path = self.journal_dir / "NavRoute.json"
+            if nav_route_path.exists():
+                with open(nav_route_path, "r", encoding="utf-8") as f:
+                    route_data = json.loads(f.read())
+                route = route_data.get("Route", [])
+                # Find the matching system in the route (usually the last entry for final dest,
+                # or the next waypoint matching the FSDTarget name)
+                for waypoint in route:
+                    if waypoint.get("StarSystem") == target_name:
+                        sp = waypoint.get("StarPos")
+                        if isinstance(sp, list) and len(sp) == 3:
+                            star_pos = (float(sp[0]), float(sp[1]), float(sp[2]))
+                        break
+        except Exception as e:
+            logger.debug("NavRoute.json read failed: %s", e)
+
+        if self.state_manager:
+            self.state_manager.on_fsd_target(target_name, star_pos)
+            try:
+                self.presenter.notify_observer_context_changed()
+            except Exception as e:
+                logger.debug("notify_observer_context_changed failed: %s", e)
+
     def _handle_scan(self, evt: Dict[str, Any]):
         """Handle scan event"""
         # Increment bodies scanned counter
@@ -722,22 +761,24 @@ class JournalMonitor:
         try:
             # Initialize
             self._initialize_monitoring()
-            
+
             last_journal_check = time.time()
-            
+            last_data_time = time.time()
+
             # Main loop
             while not self.stop_event.is_set():
                 # Handle pause
                 if self.pause_event.is_set():
                     time.sleep(self.poll_slow)
                     continue
-                
+
                 # Handle rescan request
                 if self.rescan_event.is_set():
                     self.rescan_event.clear()
                     self._perform_rescan()
+                    last_data_time = time.time()  # reset after rescan
                     continue
-                
+
                 # Check for journal rotation (every 5 seconds)
                 if time.time() - last_journal_check > 5.0:
                     last_journal_check = time.time()
@@ -746,24 +787,32 @@ class JournalMonitor:
                 # Check if file was rotated/deleted
                 if self.file_reader.is_rotated():
                     self._reopen_current_file()
-                
+
                 # Read and process new line
                 line = self.file_reader.read_line()
-                
+
                 if not line:
-                    time.sleep(self.poll_fast)
+                    # Idle backoff: use slow polling if no data for a while
+                    idle_time = time.time() - last_data_time
+                    if idle_time > self.idle_backoff_threshold:
+                        time.sleep(self.poll_slow)
+                    else:
+                        time.sleep(self.poll_fast)
                     continue
-                
+
+                # Got data — reset idle timer
+                last_data_time = time.time()
+
                 # Parse and process event
                 evt = self.event_processor.parse_line(line)
-                
+
                 if evt:
                     self.event_processor.process_event(evt)
-                    
+
                     # Update statistics
                     stats = self.event_processor.get_stats()
                     self.model.update_status(stats)
-                    
+
                     # Update heartbeat
                     self.presenter.update_scan_status("ACTIVE")
                     
