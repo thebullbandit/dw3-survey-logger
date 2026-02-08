@@ -35,6 +35,7 @@ from observer_models import (
     ObserverNote,
     SliceStatus,
     SamplingMethod,
+    SurveyType,
     ObservationFlags,
     create_observation_from_context,
     SURVEY_AXIS_INDEX,
@@ -191,7 +192,8 @@ class ObserverOverlay:
         on_export: Optional[Callable[[], None]] = None,
         session_id: str = "",
         app_version: str = "",
-        observer_storage=None
+        observer_storage=None,
+        survey_type: SurveyType = SurveyType.REGULAR_DENSITY
     ):
         """
         Initialize overlay.
@@ -203,6 +205,7 @@ class ObserverOverlay:
             session_id: Current session ID
             app_version: App version string
             observer_storage: ObserverStorage instance for sample tracking
+            survey_type: Type of survey being conducted
         """
         self.parent = parent
         self.config = config
@@ -212,9 +215,11 @@ class ObserverOverlay:
         self.on_export = on_export
         self.on_edit: Optional[Callable[[ObserverNote], None]] = None
         self.on_save_boxel: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.on_export_boxel: Optional[Callable[[], None]] = None
         self.session_id = session_id
         self.app_version = app_version
         self.observer_storage = observer_storage
+        self.survey_type = survey_type
 
         # Hotkey hint shown in the overlay (set by main.py)
         # Example: "Hotkey: Ctrl+Shift+O (global)" or "Hotkey: Ctrl+O (in-app)"
@@ -254,6 +259,9 @@ class ObserverOverlay:
 
         # Tooltip references (kept to avoid GC in some Tk builds)
         self._tooltips = []
+
+        # Button references for dynamic updates
+        self._save_button: Optional[tk.Button] = None
 
         # Section frames (for show/hide)
         self._details_frame: Optional[tk.Frame] = None
@@ -303,8 +311,13 @@ class ObserverOverlay:
             self.window.geometry(f"{saved_w}x{saved_h}")
         else:
             self.window.geometry(f"{self._base_width}x{ideal_height}")
-        # Allow shrinking — scrollbar kicks in when content overflows
-        self.window.minsize(self._base_width, 425)
+
+        # Set minimum size based on survey type (boxel surveys need less height)
+        if self.survey_type == SurveyType.BOXEL_SIZE:
+            min_height = 350  # Boxel survey has less content
+        else:
+            min_height = 425  # Density surveys need more space
+        self.window.minsize(self._base_width, min_height)
 
         
         # Center on parent
@@ -338,26 +351,32 @@ class ObserverOverlay:
         return self.window is not None and self.window.winfo_exists()
 
     def _save_window_size(self, width: int, height: int):
-        """Persist overlay window size to settings.json."""
+        """Persist overlay window size to settings.json (per survey type)."""
         try:
             data = {}
             if _SETTINGS_PATH.exists():
                 data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
-            data["overlay_width"] = width
-            data["overlay_height"] = height
+            # Use survey-type specific keys so each survey type remembers its own size
+            suffix = self.survey_type.value if self.survey_type else "regular_density"
+            data[f"overlay_width_{suffix}"] = width
+            data[f"overlay_height_{suffix}"] = height
             _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
             _SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception as e:
             logger.debug("_save_window_size failed: %s", e)
 
     def _load_window_size(self) -> Tuple[Optional[int], Optional[int]]:
-        """Load saved overlay window size from settings.json."""
+        """Load saved overlay window size from settings.json (per survey type)."""
         try:
             if _SETTINGS_PATH.exists():
                 data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
-                w = data.get("overlay_width")
-                h = data.get("overlay_height")
-                if isinstance(w, int) and isinstance(h, int) and w >= 480 and h >= 425:
+                # Use survey-type specific keys
+                suffix = self.survey_type.value if self.survey_type else "regular_density"
+                w = data.get(f"overlay_width_{suffix}")
+                h = data.get(f"overlay_height_{suffix}")
+                # Minimum height varies by survey type
+                min_height = 350 if self.survey_type == SurveyType.BOXEL_SIZE else 425
+                if isinstance(w, int) and isinstance(h, int) and w >= 480 and h >= min_height:
                     return w, h
         except Exception as e:
             logger.debug("_load_window_size failed: %s", e)
@@ -410,7 +429,13 @@ class ObserverOverlay:
     def _create_window(self):
         """Create the toplevel window"""
         self.window = tk.Toplevel(self.parent)
-        self.window.title("Add Observation")
+        # Set title based on survey type
+        survey_titles = {
+            SurveyType.REGULAR_DENSITY: "Add Observation - Regular Density",
+            SurveyType.LOGARITHMIC_DENSITY: "Add Observation - Logarithmic Density",
+            SurveyType.BOXEL_SIZE: "Add Observation - Boxel Size",
+        }
+        self.window.title(survey_titles.get(self.survey_type, "Add Observation"))
         self.window.configure(bg=self.colors.BG)
         self.window.resizable(True, True)
 
@@ -419,7 +444,9 @@ class ObserverOverlay:
         self._load_icon_for_toplevel()
 
         # Minimum size set dynamically in show() after UI is built
-        self.window.minsize(480, 425)
+        # Use smaller minsize for boxel surveys which have less content
+        min_height = 350 if self.survey_type == SurveyType.BOXEL_SIZE else 425
+        self.window.minsize(480, min_height)
 
         # Keep it associated with the parent window, but DO NOT make it modal.
         # Modal (grab_set) can freeze the app if the game blocks the overlay from coming to front.
@@ -538,21 +565,29 @@ class ObserverOverlay:
         self._scroll_canvas.bind_all("<Button-4>", _on_mousewheel_linux)
         self._scroll_canvas.bind_all("<Button-5>", _on_mousewheel_linux)
 
-        # Build sections inside scrollable area
+        # Build sections inside scrollable area based on survey type
         self._build_header(main_frame)
-        self._build_z_target_section(main_frame)
-        self._build_status_section(main_frame)
-        self._build_details_section(main_frame)
-        self._build_density_section(main_frame)
-       #self._build_flags_section(main_frame)
-        self._build_boxel_section(main_frame)
+
+        if self.survey_type in (SurveyType.REGULAR_DENSITY, SurveyType.LOGARITHMIC_DENSITY):
+            # Density survey sections
+            self._build_z_target_section(main_frame)
+            self._build_status_section(main_frame)
+            self._build_details_section(main_frame)
+            self._build_density_section(main_frame)
+            # self._build_flags_section(main_frame)
+        elif self.survey_type == SurveyType.BOXEL_SIZE:
+            # Boxel survey sections only
+            self._build_boxel_section(main_frame)
+
         self._build_notes_section(main_frame)
 
         # Footer pinned at bottom (outside scrollable area)
         self._build_footer(outer)
 
         # Initially hide details (shown when status != in_progress)
-        self._update_section_visibility()
+        # Only relevant for density surveys
+        if self.survey_type in (SurveyType.REGULAR_DENSITY, SurveyType.LOGARITHMIC_DENSITY):
+            self._update_section_visibility()
 
     def _build_header(self, parent: tk.Frame):
         """Build header with context info (read-only)"""
@@ -1054,11 +1089,26 @@ class ObserverOverlay:
                 bg=self.colors.BG_PANEL
             ).grid(row=idx, column=2, sticky="w", padx=(10, 0), pady=3)
 
+        # Help text for EMPTY entries (shown below Max Distance field)
+        empty_help = tk.Label(
+            self._density_frame,
+            text="💡 Tip: Enter 0 for System Count if no systems exist within 20ly. System Name will auto-fill to 'EMPTY'.",
+            font=("Consolas", 8),
+            fg=self.colors.GREEN,
+            bg=self.colors.BG_PANEL,
+            wraplength=440,
+            justify="left"
+        )
+        empty_help.pack(anchor="w", padx=10, pady=(4, 6))
+
     def _build_boxel_section(self, parent: tk.Frame):
-        """Build boxel size survey section (optional highest-numbered system)"""
+        """Build boxel size survey section (highest-numbered system entry)"""
+        # Title varies: "BOXEL SIZE" for dedicated boxel survey, "(optional)" for density surveys
+        section_title = "BOXEL SIZE SURVEY" if self.survey_type == SurveyType.BOXEL_SIZE else "BOXEL SIZE (optional)"
+
         boxel_frame = tk.LabelFrame(
             parent,
-            text="BOXEL SIZE (optional)",
+            text=section_title,
             font=("Consolas", 10, "bold"),
             fg=self.colors.ORANGE,
             bg=self.colors.BG_PANEL,
@@ -1069,7 +1119,7 @@ class ObserverOverlay:
 
         tk.Label(
             boxel_frame,
-            text="For the Stellar Properties survey: enter the highest-numbered system in your current boxel.",
+            text="Enter the highest-numbered system in your current boxel for stellar properties analysis.",
             font=("Consolas", 8),
             fg=self.colors.MUTED,
             bg=self.colors.BG_PANEL,
@@ -1097,24 +1147,11 @@ class ObserverOverlay:
             insertbackground=self.colors.TEXT,
             relief="solid",
             bd=1,
-            width=30
+            width=40
         )
         entry.grid(row=0, column=1, sticky="w", pady=3)
 
-        btn_save_boxel = tk.Button(
-            inner,
-            text="Save Boxel",
-            font=("Consolas", 9),
-            bg="#3a5f8a",
-            fg="#d0d8e8",
-            activebackground="#4a7aaa",
-            activeforeground="#ffffff",
-            command=self._on_save_boxel,
-            width=12,
-            cursor="hand2"
-        )
-        btn_save_boxel.grid(row=0, column=2, sticky="w", padx=(10, 0), pady=3)
-
+        # Status label for save feedback
         self._boxel_status_lbl = tk.Label(
             inner,
             text="",
@@ -1122,7 +1159,7 @@ class ObserverOverlay:
             fg=self.colors.GREEN,
             bg=self.colors.BG_PANEL
         )
-        self._boxel_status_lbl.grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 2))
+        self._boxel_status_lbl.grid(row=1, column=1, sticky="w", pady=(0, 2))
 
         self._tooltips.append(Tooltip(
             entry,
@@ -1326,11 +1363,11 @@ class ObserverOverlay:
             self._notes_hint_collapsed.pack(side="left", padx=(8, 0))
 
     def _build_footer(self, parent: tk.Frame):
-        """Build footer with Save/Cancel buttons"""
+        """Build footer with Save/Cancel buttons (varies by survey type)"""
         footer = tk.Frame(parent, bg=self.colors.BG)
         footer.pack(fill="x")
 
-        # Cancel button
+        # Cancel button (always shown)
         btn_cancel = tk.Button(
             footer,
             text="Cancel",
@@ -1342,43 +1379,77 @@ class ObserverOverlay:
         )
         btn_cancel.pack(side="right", padx=(10, 0))
 
-        # Save button (primary)
-        btn_save = tk.Button(
-            footer,
-            text="Save",
-            font=("Consolas", 9, "bold"),
-            bg=self.colors.ORANGE,
-            fg="#000000",
-            command=self._on_save,
-            width=12,
-            cursor="hand2"
-        )
-        btn_save.pack(side="right")
+        if self.survey_type == SurveyType.BOXEL_SIZE:
+            # Boxel survey buttons
 
-        # Edit Last button
-        btn_edit_last = tk.Button(
-            footer,
-            text="Edit Last",
-            font=("Consolas", 9),
-            bg=self.colors.BG_PANEL,
-            fg=self.colors.ORANGE,
-            command=self._on_edit_last,
-            width=12
-        )
-        btn_edit_last.pack(side="left")
+            # Save Boxel button (primary - blue)
+            self._save_button = tk.Button(
+                footer,
+                text="Save Boxel",
+                font=("Consolas", 9, "bold"),
+                bg="#3a5f8a",
+                fg="#d0d8e8",
+                activebackground="#4a7aaa",
+                activeforeground="#ffffff",
+                command=self._on_save_boxel,
+                width=12,
+                cursor="hand2"
+            )
+            self._save_button.pack(side="right")
 
-        # Export button
-        btn_export = tk.Button(
-            footer,
-            text="Export",
-            font=("Consolas", 9),
-            bg=self.colors.BG_PANEL,
-            fg=self.colors.GREEN,
-            command=self._on_export,
-            width=12
-        )
-        btn_export.pack(side="left", padx=(10, 0))
-        self._tooltips.append(Tooltip(btn_export, "Export Density Sheet", delay_ms=800))
+            # Export Boxel button
+            btn_export_boxel = tk.Button(
+                footer,
+                text="Export",
+                font=("Consolas", 9),
+                bg=self.colors.BG_PANEL,
+                fg=self.colors.GREEN,
+                command=self._on_export_boxel,
+                width=12
+            )
+            btn_export_boxel.pack(side="left")
+            self._tooltips.append(Tooltip(btn_export_boxel, "Export Boxel Sheet", delay_ms=800))
+
+        else:
+            # Density survey buttons
+
+            # Save button (primary)
+            self._save_button = tk.Button(
+                footer,
+                text="Save",
+                font=("Consolas", 9, "bold"),
+                bg=self.colors.ORANGE,
+                fg="#000000",
+                command=self._on_save,
+                width=12,
+                cursor="hand2"
+            )
+            self._save_button.pack(side="right")
+
+            # Edit Last button
+            btn_edit_last = tk.Button(
+                footer,
+                text="Edit Last",
+                font=("Consolas", 9),
+                bg=self.colors.BG_PANEL,
+                fg=self.colors.ORANGE,
+                command=self._on_edit_last,
+                width=12
+            )
+            btn_edit_last.pack(side="left")
+
+            # Export button
+            btn_export = tk.Button(
+                footer,
+                text="Export",
+                font=("Consolas", 9),
+                bg=self.colors.BG_PANEL,
+                fg=self.colors.GREEN,
+                command=self._on_export,
+                width=12
+            )
+            btn_export.pack(side="left", padx=(10, 0))
+            self._tooltips.append(Tooltip(btn_export, "Export Density Sheet", delay_ms=800))
 
     # =========================================================================
     # UI UPDATES
@@ -1393,12 +1464,13 @@ class ObserverOverlay:
         system = self._context.system_name or "-"
         self._lbl_system.config(text=system)
 
-        # Actual Y coordinate from game
-        try:
-            actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
-            self._lbl_zbin.config(text=f"{actual_y:,.2f}" if actual_y is not None else "-")
-        except (TypeError, IndexError):
-            self._lbl_zbin.config(text="-")
+        # Actual Y coordinate from game (only for density surveys)
+        if hasattr(self, "_lbl_zbin") and self._lbl_zbin is not None:
+            try:
+                actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
+                self._lbl_zbin.config(text=f"{actual_y:,.2f}" if actual_y is not None else "-")
+            except (TypeError, IndexError):
+                self._lbl_zbin.config(text="-")
 
         z_bin = self._context.z_bin
 
@@ -1435,56 +1507,65 @@ class ObserverOverlay:
         if hasattr(self, "_lbl_hotkey") and self._lbl_hotkey is not None:
             self._lbl_hotkey.config(text=self.hotkey_hint or "-")
 
-        # Next Sample Location (simplified for users)
-        try:
-            z_direction = getattr(self._context, "z_direction", 1)
-            z_direction_known = getattr(self._context, "z_direction_known", False)
-            actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
+        # Next Sample Location (simplified for users) - only for density surveys
+        if self.survey_type in (SurveyType.REGULAR_DENSITY, SurveyType.LOGARITHMIC_DENSITY):
+            try:
+                z_direction = getattr(self._context, "z_direction", 1)
+                z_direction_known = getattr(self._context, "z_direction_known", False)
+                actual_y = self._context.star_pos[SURVEY_AXIS_INDEX]
 
-            # Next Target Y - show the locked target's Y coordinate
-            target_pos = getattr(self._context, "target_star_pos", None)
-            if target_pos is not None:
-                target_y = target_pos[SURVEY_AXIS_INDEX]
-                self._lbl_current_z.config(text=f"{target_y:,.2f}")
-            else:
-                self._lbl_current_z.config(text="-")
+                # Next Target Y - show the locked target's Y coordinate
+                if hasattr(self, "_lbl_current_z") and self._lbl_current_z is not None:
+                    target_pos = getattr(self._context, "target_star_pos", None)
+                    if target_pos is not None:
+                        target_y = target_pos[SURVEY_AXIS_INDEX]
+                        self._lbl_current_z.config(text=f"{target_y:,.2f}")
+                    else:
+                        self._lbl_current_z.config(text="-")
 
-            # Next slice = actual Y +/- 50 in the detected travel direction
-            # Only show after direction is detected (at least 1 jump)
-            if z_direction_known:
-                next_slice_y = actual_y + (50 * z_direction)
-                arrow = "\u2191" if z_direction >= 1 else "\u2193"
-                self._lbl_target_z.config(text=f"{next_slice_y:,.2f} {arrow}")
-            else:
-                self._lbl_target_z.config(text="(jump to detect)")
+                # Next slice = actual Y +/- 50 in the detected travel direction
+                # Only show after direction is detected (at least 1 jump)
+                if hasattr(self, "_lbl_target_z") and self._lbl_target_z is not None:
+                    if z_direction_known:
+                        next_slice_y = actual_y + (50 * z_direction)
+                        arrow = "\u2191" if z_direction >= 1 else "\u2193"
+                        self._lbl_target_z.config(text=f"{next_slice_y:,.2f} {arrow}")
+                    else:
+                        self._lbl_target_z.config(text="(jump to detect)")
 
-            # Update sample count display
-            self._update_sample_count()
+                # Update sample count display
+                self._update_sample_count()
 
-        except Exception as e:
-            logger.debug("Z-target section update failed: %s", e)
-            pass
+            except Exception as e:
+                logger.debug("Z-target section update failed: %s", e)
+                pass
 
     def _update_sample_count(self):
         """Update the sample count display based on observer storage data"""
+        # Only for density surveys (boxel surveys don't have sample count display)
+        if not hasattr(self, "_lbl_sample_count") or self._lbl_sample_count is None:
+            return
+
         try:
             # Only update if we have observer_storage, context, and session_id
-            if (not self.observer_storage or 
-                not self._context or 
-                not self._context.session_id or 
+            if (not self.observer_storage or
+                not self._context or
+                not self._context.session_id or
                 self._context.z_bin is None):
                 self._lbl_sample_count.config(text="-")
                 return
-            
+
             # Use locked z_bin if set, otherwise current context z_bin
             z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
 
-            # Get sample counts from observer storage
+            # Get sample counts from observer storage (filtered by survey type)
+            survey_type_str = self.survey_type.value if self.survey_type else SurveyType.REGULAR_DENSITY.value
             counts = self.observer_storage.get_sample_counts(
                 self._context.session_id,
-                z_bin
+                z_bin,
+                survey_type_str
             )
-            
+
             current_sample = counts['current_sample']
             current_systems = counts['current_systems']
             total_samples = counts['total_samples']
@@ -1495,13 +1576,17 @@ class ObserverOverlay:
                 f"System: #{current_systems}\n"
                 f"Total:  {total_samples}"
             )
-            
+
             self._lbl_sample_count.config(text=count_text)
-            
+
+            # Update Save button text if we're on system 20
+            self._update_save_button_text()
+
         except Exception as e:
             # If there's any error, just show a dash
             logger.debug("Sample count update failed: %s", e)
-            self._lbl_sample_count.config(text="-")
+            if hasattr(self, "_lbl_sample_count") and self._lbl_sample_count is not None:
+                self._lbl_sample_count.config(text="-")
 
     def _check_sample_hint(self):
         """Show a hint exactly once when the current sample reaches 20 systems."""
@@ -1509,8 +1594,9 @@ class ObserverOverlay:
             if not self.observer_storage or not self._context or self._context.z_bin is None:
                 return
             z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
+            survey_type_str = self.survey_type.value if self.survey_type else SurveyType.REGULAR_DENSITY.value
             counts = self.observer_storage.get_sample_counts(
-                self._context.session_id, z_bin
+                self._context.session_id, z_bin, survey_type_str
             )
             current_systems = counts.get("current_systems", 0)
             # Build a key so we only show the hint once per sample
@@ -1526,8 +1612,45 @@ class ObserverOverlay:
         except Exception as e:
             logger.debug("_check_sample_hint failed: %s", e)
 
+    def _update_save_button_text(self):
+        """
+        Update Save button text based on current sample progress.
+        If this is the 21st system (completing the sample), change text to 'Complete'.
+        """
+        try:
+            if not self._save_button or not self.observer_storage or not self._context:
+                return
+            
+            if self._context.z_bin is None:
+                return
+
+            z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
+            survey_type_str = self.survey_type.value if self.survey_type else SurveyType.REGULAR_DENSITY.value
+            counts = self.observer_storage.get_sample_counts(
+                self._context.session_id, z_bin, survey_type_str
+            )
+            current_systems = counts.get("current_systems", 0)
+
+            # If we're about to save the 21st system, change button to "Complete"
+            # current_systems is the count BEFORE saving, so we check if it's 20
+            if current_systems == 20:
+                self._save_button.config(text="Complete")
+            else:
+                self._save_button.config(text="Save")
+                
+        except Exception as e:
+            logger.debug("_update_save_button_text failed: %s", e)
+
     def _update_section_visibility(self):
-        """Show/hide sections based on status selection"""
+        """Show/hide sections based on status selection (density surveys only)"""
+        # Only relevant for density surveys
+        if self.survey_type not in (SurveyType.REGULAR_DENSITY, SurveyType.LOGARITHMIC_DENSITY):
+            return
+
+        # Guard against missing variables (shouldn't happen, but be safe)
+        if not self._slice_status_var or not self._details_frame:
+            return
+
         status = self._slice_status_var.get()
 
         # Preserve current window size so toggling status doesn't auto-shrink and hide footer buttons
@@ -1592,10 +1715,38 @@ class ObserverOverlay:
         raw = self._system_count_var.get().strip() if hasattr(self, "_system_count_var") else ""
         if not raw:
             self._corrected_n_var.set("")
+            # Reset system name label to normal color
+            if hasattr(self, "_lbl_system") and self._lbl_system:
+                try:
+                    self._lbl_system.config(fg=self.colors.TEXT)
+                except:
+                    pass
             return
         try:
             n = int(raw)
             self._corrected_n_var.set(str(n + 1))
+            
+            # Visual feedback: Show that system_name will be "EMPTY" when count is 0
+            if n == 0 and hasattr(self, "_lbl_system") and self._lbl_system:
+                try:
+                    # Change system name label to show EMPTY in green
+                    self._lbl_system.config(fg=self.colors.GREEN)
+                    # Temporarily show (will be EMPTY) hint
+                    original_text = self._lbl_system.cget("text")
+                    if original_text and "EMPTY" not in original_text.upper():
+                        self._lbl_system.config(text=f"{original_text} → EMPTY")
+                except:
+                    pass
+            else:
+                # Reset to normal if not 0
+                if hasattr(self, "_lbl_system") and self._lbl_system and self._context:
+                    try:
+                        self._lbl_system.config(
+                            text=self._context.system_name or "-",
+                            fg=self.colors.TEXT
+                        )
+                    except:
+                        pass
         except ValueError:
             self._corrected_n_var.set("")
 
@@ -1606,6 +1757,26 @@ class ObserverOverlay:
 
     def _on_save(self):
         """Handle save button click"""
+        # Auto-complete logic: If this is the 21st system, automatically set status to COMPLETE
+        # Only applies to regular density surveys (21 samples)
+        if self.survey_type == SurveyType.REGULAR_DENSITY:
+            try:
+                if self.observer_storage and self._context and self._context.z_bin is not None:
+                    z_bin = self._locked_z_bin if self._locked_z_bin is not None else self._context.z_bin
+                    survey_type_str = self.survey_type.value if self.survey_type else SurveyType.REGULAR_DENSITY.value
+                    counts = self.observer_storage.get_sample_counts(
+                        self._context.session_id, z_bin, survey_type_str
+                    )
+                    current_systems = counts.get("current_systems", 0)
+
+                    # If we're about to save the 21st system (count is 20), auto-set to COMPLETE
+                    if current_systems == 20 and self._slice_status_var.get() == SliceStatus.IN_PROGRESS.value:
+                        self._slice_status_var.set(SliceStatus.COMPLETE.value)
+                        # Trigger visibility update to show details section
+                        self._update_section_visibility()
+            except Exception as e:
+                logger.debug("Auto-complete check failed: %s", e)
+        
         # Duplicate guard: warn if saving the same system twice in a row
         current_addr = self._context.system_address if self._context else None
         if (current_addr is not None
@@ -1699,6 +1870,20 @@ class ObserverOverlay:
         for var in self._flag_vars.values():
             var.set(False)
         self._notes_widget.delete("1.0", "end")
+        
+        # Reset Save button text
+        if self._save_button:
+            self._save_button.config(text="Save")
+        
+        # Reset system name label to context value
+        if hasattr(self, "_lbl_system") and self._lbl_system and self._context:
+            try:
+                self._lbl_system.config(
+                    text=self._context.system_name or "-",
+                    fg=self.colors.TEXT
+                )
+            except:
+                pass
 
     def _on_save_boxel(self):
         """Handle Save Boxel button click"""
@@ -1742,11 +1927,23 @@ class ObserverOverlay:
             messagebox.showerror("Edit Error", f"Failed to load last observation:\n{e}", parent=self.window)
 
     def _on_export(self):
-        """Handle export button click - delegates to presenter callback"""
+        """Handle export button click - delegates to presenter callback with survey type"""
         if callable(self.on_export):
-            self.on_export()
+            # Pass survey_type to the export handler
+            try:
+                self.on_export(self.survey_type)
+            except TypeError:
+                # Fallback for callbacks that don't accept survey_type
+                self.on_export()
         else:
             messagebox.showinfo("Export", "Export not available.", parent=self.window)
+
+    def _on_export_boxel(self):
+        """Handle boxel export button click - delegates to presenter callback"""
+        if callable(self.on_export_boxel):
+            self.on_export_boxel()
+        else:
+            messagebox.showinfo("Export", "Boxel export not available.", parent=self.window)
 
     def _on_cancel(self):
         """Handle cancel button click"""
@@ -1761,6 +1958,13 @@ class ObserverOverlay:
         """
         errors = []
 
+        # Boxel surveys have minimal validation
+        if self.survey_type == SurveyType.BOXEL_SIZE:
+            # For boxel surveys, the main Save button isn't typically used
+            # (users use the "Save Boxel" button instead), but allow it
+            return (len(errors) == 0, errors)
+
+        # Density survey validation
         # Discard requires notes
         status = self._slice_status_var.get()
 
@@ -1809,7 +2013,8 @@ class ObserverOverlay:
         note = create_observation_from_context(
             context=context_dict,
             session_id=self.session_id,
-            app_version=self.app_version
+            app_version=self.app_version,
+            survey_type=self.survey_type
         )
 
         # Set CMDR-input fields
@@ -1825,12 +2030,20 @@ class ObserverOverlay:
         system_count = self._system_count_var.get().strip()
         if system_count:
             note.system_count = int(system_count)
-
             note.corrected_n = note.system_count + 1
+            
+            # Auto-fill "EMPTY" for zero-density entries
+            if note.system_count == 0:
+                note.system_name = "EMPTY"
 
         max_distance = self._max_distance_var.get().strip()
         if max_distance:
             note.max_distance = float(max_distance)
+
+        # Boxel highest system (if filled)
+        boxel_val = self._boxel_highest_system_var.get().strip()
+        if boxel_val:
+            note.boxel_highest_system = boxel_val
 
         # Flags
         note.flags = ObservationFlags(

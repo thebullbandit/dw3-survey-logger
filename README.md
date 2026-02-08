@@ -1,18 +1,18 @@
 [![Version](https://img.shields.io/github/v/release/thebullbandit/dw3-survey-logger)](https://github.com/thebullbandit/dw3-survey-logger/releases)
 [![License](https://img.shields.io/github/license/thebullbandit/dw3-survey-logger)](LICENSE)
 
-# DW3 Survey Logger v0.9.16
+# DW3 Survey Logger v0.9.17
 
 ## Project Status
 
-**This is still under active development.**  
+**This is still under development.**
 It was created to support **DW3 expeditions**.
 
 https://forums.frontier.co.uk/threads/dw3-distant-worlds-3-science-thread.643734/
 
 Because development is ongoing, **bugs and rough edges should be expected**.
 
-## Known Issues (v0.9.16)
+## Known Issues (v0.9.17)
 
 None
 
@@ -20,13 +20,14 @@ None
 
 ## Overview
 
-DW3 Survey Logger is for commanders participating in **DW3 (Distant Worlds Expedition 3)**.  
+DW3 Survey Logger is for commanders participating in **DW3 (Distant Worlds Expedition 3)**.
 It helps collect, structure, validate and export survey data from *Elite Dangerous* in a consistent way.
 
 The logger combines:
 - Automatic journal parsing from the game
 - Human observations entered during flight
 - Structured storage in a local SQLite database
+- Export to spreadsheets (Density Survey/Boxel Size)
 
 The result is clean and comparable data that DW3 teams can use without manual cleanup.
 
@@ -34,14 +35,30 @@ The result is clean and comparable data that DW3 teams can use without manual cl
 
 ## Application Layout & Sections
 
-Below is an overview of the main sections of the application and how they work together.  
-Each section will soon have screenshots to help new users orient themselves.
-
-
+Below is an overview of the main sections of the application and how they work together.
 
 ---
 
-### 1. Main Observation Screen
+### 1. Survey Type Selection
+
+When you press the observer hotkey (default: Ctrl+Shift+O), a selection dialog appears allowing you to choose between three survey types:
+
+| # | Survey Type | Description |
+|---|-------------|-------------|
+| 1 | Regular Density Scan | 21 samples, 50 LY Z-bin increments (0-1000 LY) |
+| 2 | Logarithmic Density Scan | 24 samples, variable increments (finer near galactic plane) |
+| 3 | Boxel Size Survey | Single entry for highest-numbered system in boxel |
+
+**Quick Selection:**
+- Press 1, 2, or 3 on your keyboard to quickly select
+- Press ESC to cancel
+- Click on any survey type button to select
+
+Each survey type opens its own specialized observation window with relevant fields.
+
+---
+
+### 2. Main Observation Screen
 
 ![Main Observation](screenshots/main_observation_screen.png)
 
@@ -53,10 +70,13 @@ Here you:
 - Enter observation values
 - Complete samples when finished
 
+**Multiple Windows:** You can have different survey types open simultaneously (e.g., Regular Density and Boxel Size windows open at the same time).
+
+**Window Size Memory:** Each survey type remembers its own window size separately. Resize your Regular Density window, and it will restore that size next time.
 
 ---
 
-### 2. Session & Sample Tracking
+### 3. Session & Sample Tracking
 
 Each expedition run is organized into:
 - **Sessions** (a continuous exploration period)
@@ -67,11 +87,13 @@ The logger automatically keeps track of:
 - Sample numbers
 - Completion state
 
+**Independent Counters:** Sample counts are tracked separately per survey type. Regular Density progress doesn't affect Logarithmic Density counts, and vice versa.
+
 This ensures consistency across commanders and across time.
 
 ---
 
-### 3. Journal Monitoring
+### 4. Journal Monitoring
 
 ![Journal Monitor](screenshots/journal_monitor.png)
 
@@ -84,9 +106,11 @@ It:
 
 No data is uploaded or shared automatically. Everything remains local on your machine.
 
+**Import Historical Journals:** Use Options → Import All Journals to scan your old journal files and import existing discoveries. Error details are now shown in the comms panel if any issues occur during import.
+
 ---
 
-### 4. Next Sample Location
+### 5. Next Sample Location
 
 The Observer Overlay shows your next sampling target while surveying.
 
@@ -100,7 +124,7 @@ Progress persists across app restarts. Direction is auto-detected after your sec
 
 ---
 
-### 5. ELW Scans & Activity Tier (Informational)
+### 6. ELW Scans & Activity Tier (Informational)
 
 ![Elw Activity Tier](screenshots/elw_activity_tier.png)
 
@@ -127,7 +151,7 @@ The activity tier has **zero impact** on:
 Two commanders with different ELW activity tiers can produce **equally valid data**.
 
 #### Why It Exists
- 
+
 The ELW activity tier exists to add a light sense of progression **without turning science into competition**.
 
 If it ever becomes distracting or controversial, it may be:
@@ -139,7 +163,7 @@ Community feedback will guide that decision.
 
 ---
 
-### 6. Data Storage (SQLite)
+### 7. Data Storage (SQLite)
 
 ![Database](screenshots/database_overview.png)
 
@@ -155,7 +179,7 @@ Both raw and processed values are preserved.
 
 ---
 
-### 7. Export to DW3 Worksheets
+### 8. Export to DW3 Worksheets
 
 ![Excel export](screenshots/excel_export.png) (Not a real sample!)
 
@@ -167,9 +191,14 @@ Exports include:
 - Measurement values
 - Required metadata for DW3 analysis
 
-Export options:
+**Distinct Filenames:** Export files are now clearly named by survey type:
+- Regular Density: `DW3_Regular_Density_CMDR_Sample_01_...xlsx`
+- Logarithmic Density: `DW3_Logarithmic_Density_CMDR_Sample_01_...xlsx`
+
+**Export Options:**
 - **Export All** - Exports CSV + Database + XLSX to a chosen folder via folder picker
-- **Individual Density XLSX export** - Now allows folder selection
+- **Export from Overlay** - Quick export button in each survey window footer
+- **Boxel Export** - Export Boxel Sheet directly from the Boxel Size survey window
 - Selected export folder is remembered between sessions
 - Clear success/failure indicators for each export
 
@@ -177,7 +206,7 @@ Files are named clearly so coordinators can identify them without opening the fi
 
 ---
 
-### 8. Options & Configuration
+### 9. Options & Configuration
 
 ![](screenshots/export_button.png) ![](screenshots/options_screen.png)
 
@@ -218,6 +247,14 @@ No commander is judged, compared or evaluated based on performance.
 2. Run the application
 3. Select your Elite Dangerous journal folder on first launch
 
+### Troubleshooting
+
+If the application doesn't start:
+- **Antivirus:** Check if your AV quarantined the exe (common with PyInstaller apps)
+- **Windows SmartScreen:** Right-click exe → Properties → Check "Unblock" → Apply
+- **VC++ Runtime:** Install [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+- **Run from CMD:** Open command prompt in the app folder and run the exe to see error messages
+
 ### Linux / Advanced Users
 ```bash
 pip install -r requirements.txt
@@ -253,13 +290,33 @@ This limitation is expected at this stage of development.
 
 ## Patch Notes
 
+### v0.9.17
+
+#### New Features
+- **Survey Type Selection** - Choose between Regular Density (21 samples), Logarithmic Density (24 samples), or Boxel Size Survey when opening the observer overlay
+- **Multiple Survey Windows** - Can have different survey types open simultaneously
+- **Per-Survey Window Sizing** - Each survey type remembers its own window size independently
+- **Distinct Export Filenames** - Regular vs Logarithmic density exports now have clearly different filenames
+- **Export from Boxel Window** - Added Export button to Boxel Size survey footer for quick access
+
+#### Improvements
+- Separate Sample Counts - Regular and Logarithmic density surveys now track progress independently
+- Journal Import Errors - Now shows specific error details in comms panel instead of just a count
+- Safer Journal Import - Handles malformed data, None values, and type mismatches gracefully
+- Excel Formula Fixes - "Dist from Sol" and "R from Core" columns now calculate correctly (no more #NAME? errors)
+
+#### Technical
+- Added `survey_type` column to database for filtering
+- Added safe type conversions for journal import
+- Fixed formula locale issues in Excel exports
+
 ### v0.9.16
 - Added: Quick "Export" button added to the Add Observation footer so you can export density worksheets without leaving the overlay.
 - Fixed: Observation window bottom clipping on Linux - window height now adapts to actual font rendering
 - Fixed: The Add Observation window saves its size when closed and restores on next open/restart.
 - Added: Next Slice Y now detects whether you're travelling up or down from your actual jumps. (Active after first jump)
-- Added: A hint appears after saving your 20th Denisity sample, reminding you to save one more to complete the sample.
-- Added: "Stellar Properties Boxel Size Survey" Added by request.  
+- Added: A hint appears after saving your 20th Density sample, reminding you to save one more to complete the sample.
+- Added: "Stellar Properties Boxel Size Survey" Added by request.
 
 ### v0.9.15
 - Changed: "Flags" section is now hidden to reduce UI clutter.
@@ -298,21 +355,21 @@ This limitation is expected at this stage of development.
 
 ## Versioning Note
 
-Recent releases focused primarily on internal stability.  
+Recent releases focused primarily on internal stability.
 Version numbering will stabilize once core behavior is fully locked in.
 
 ---
 
 ## Disclaimer
 
-This project is **not officially affiliated with Frontier Developments or DW3 leadership**.  
+This project is **not officially affiliated with Frontier Developments or DW3 leadership**.
 It is a community-built tool provided as-is.
 
 ---
 
 ## Feedback & Contributions
 
-Bug reports and suggestions are welcome via GitHub Issues. 
+Bug reports and suggestions are welcome via GitHub Issues.
 Please include logs and steps to reproduce where possible.
 
 ---

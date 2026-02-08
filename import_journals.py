@@ -38,11 +38,11 @@ _logger = logging.getLogger("dw3.import_journals")
 
 class JournalImporter:
     """Import historical journal files"""
-    
+
     def __init__(self, database, model, logger=None):
         """
         Initialize importer
-        
+
         Args:
             database: Database instance
             model: Model instance
@@ -51,13 +51,34 @@ class JournalImporter:
         self.database = database
         self.model = model
         self.logger = logger
-        
+
         # Statistics
         self.files_processed = 0
         self.events_processed = 0
         self.candidates_found = 0
         self.duplicates_skipped = 0
         self.errors = 0
+        self.error_details: List[str] = []  # Store error details for user visibility
+
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        """Safely convert a value to float, handling None and invalid types."""
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        """Safely convert a value to int, handling None and invalid types."""
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
     
     def _log(self, message):
         """Log message (if logger available)"""
@@ -91,8 +112,11 @@ class JournalImporter:
             try:
                 self._process_journal_file(journal_file, cmdr_filter)
             except Exception as e:
+                error_msg = f"File error: {journal_file.name} - {type(e).__name__}"
                 self._log(f"Error processing {journal_file.name}: {e}")
                 self.errors += 1
+                if len(self.error_details) < 10:
+                    self.error_details.append(error_msg)
         
         return self._get_stats()
     
@@ -136,11 +160,17 @@ class JournalImporter:
                         self._process_scan_event(event, current_cmdr, current_system, star_pos)
                     
                 except json.JSONDecodeError as e:
+                    error_msg = f"{journal_file.name} line {line_num}: JSON parse error"
                     self._log(f"  JSON error on line {line_num}: {e}")
                     self.errors += 1
+                    if len(self.error_details) < 10:  # Limit stored details
+                        self.error_details.append(error_msg)
                 except Exception as e:
+                    error_msg = f"{journal_file.name} line {line_num}: {type(e).__name__}"
                     self._log(f"  Error processing line {line_num}: {e}")
                     self.errors += 1
+                    if len(self.error_details) < 10:  # Limit stored details
+                        self.error_details.append(error_msg)
         
         self.files_processed += 1
     
@@ -192,7 +222,7 @@ class JournalImporter:
         if not (is_elw or is_terraformable):
             return  # Not a candidate
         
-        # Build candidate data
+        # Build candidate data using safe conversions to handle None/invalid values
         candidate_data = {
             "timestamp_utc": event.get("timestamp", ""),
             "event": "Scan",
@@ -202,44 +232,50 @@ class JournalImporter:
             "system_address": event.get("SystemAddress"),
             "star_system": system_name or "Unknown",
             "body_name": body_name,
-            "body_id": event.get("BodyID", 0),
-            "distance_from_arrival_ls": event.get("DistanceFromArrivalLS", 0.0),
+            "body_id": self._safe_int(event.get("BodyID"), 0),
+            "distance_from_arrival_ls": self._safe_float(event.get("DistanceFromArrivalLS"), 0.0),
             "candidate_type": "ELW" if is_elw else "Terraformable HMC/WW/RW/AW",
             "terraform_state": terraform_state,
             "planet_class": planet_class,
             "atmosphere": self._format_atmosphere(event),
-            "volcanism": event.get("Volcanism", ""),
-            "mass_em": event.get("MassEM", 0.0),
-            "radius_km": event.get("Radius", 0.0) / 1000.0,
-            "surface_gravity_g": event.get("SurfaceGravity", 0.0) / 9.81,
-            "surface_temp_k": event.get("SurfaceTemperature", 0.0),
-            "surface_pressure_atm": event.get("SurfacePressure", 0.0) / 101325.0,
+            "volcanism": event.get("Volcanism", "") or "",
+            "mass_em": self._safe_float(event.get("MassEM"), 0.0),
+            "radius_km": self._safe_float(event.get("Radius"), 0.0) / 1000.0,
+            "surface_gravity_g": self._safe_float(event.get("SurfaceGravity"), 0.0) / 9.81,
+            "surface_temp_k": self._safe_float(event.get("SurfaceTemperature"), 0.0),
+            "surface_pressure_atm": self._safe_float(event.get("SurfacePressure"), 0.0) / 101325.0,
             "landable": "Yes" if event.get("Landable", False) else "No",
             "tidal_lock": "Yes" if event.get("TidalLock", False) else "No",
-            "rotation_period_days": event.get("RotationPeriod", 0.0) / 86400.0,
-            "orbital_period_days": event.get("OrbitalPeriod", 0.0) / 86400.0,
-            "semi_major_axis_au": event.get("SemiMajorAxis", 0.0) / 1.496e11,
-            "orbital_eccentricity": event.get("Eccentricity", 0.0),
-            "orbital_inclination_deg": event.get("OrbitalInclination", 0.0),
-            "arg_of_periapsis_deg": event.get("Periapsis", 0.0),
-            "ascending_node_deg": event.get("AscendingNode", 0.0),
-            "mean_anomaly_deg": event.get("MeanAnomaly", 0.0),
-            "axial_tilt_deg": event.get("AxialTilt", 0.0),
+            "rotation_period_days": self._safe_float(event.get("RotationPeriod"), 0.0) / 86400.0,
+            "orbital_period_days": self._safe_float(event.get("OrbitalPeriod"), 0.0) / 86400.0,
+            "semi_major_axis_au": self._safe_float(event.get("SemiMajorAxis"), 0.0) / 1.496e11,
+            "orbital_eccentricity": self._safe_float(event.get("Eccentricity"), 0.0),
+            "orbital_inclination_deg": self._safe_float(event.get("OrbitalInclination"), 0.0),
+            "arg_of_periapsis_deg": self._safe_float(event.get("Periapsis"), 0.0),
+            "ascending_node_deg": self._safe_float(event.get("AscendingNode"), 0.0),
+            "mean_anomaly_deg": self._safe_float(event.get("MeanAnomaly"), 0.0),
+            "axial_tilt_deg": self._safe_float(event.get("AxialTilt"), 0.0),
             "was_discovered": "True" if event.get("WasDiscovered", False) else "False",
             "was_mapped": "True" if event.get("WasMapped", False) else "False",
             "cmdr_name": cmdr_name or "Unknown",
             "session_id": "IMPORT"
         }
         
-        # Add star position
-        if star_pos:
-            candidate_data["star_pos_x"] = star_pos[0]
-            candidate_data["star_pos_y"] = star_pos[1]
-            candidate_data["star_pos_z"] = star_pos[2]
-            
-            # Calculate distance from Sol
-            distance = self.model.calculate_sol_distance(star_pos[0], star_pos[1], star_pos[2])
-            candidate_data["distance_from_sol_ly"] = distance
+        # Add star position (with safe access for malformed data)
+        if star_pos and isinstance(star_pos, (list, tuple)) and len(star_pos) >= 3:
+            try:
+                pos_x = self._safe_float(star_pos[0], 0.0)
+                pos_y = self._safe_float(star_pos[1], 0.0)
+                pos_z = self._safe_float(star_pos[2], 0.0)
+                candidate_data["star_pos_x"] = pos_x
+                candidate_data["star_pos_y"] = pos_y
+                candidate_data["star_pos_z"] = pos_z
+
+                # Calculate distance from Sol
+                distance = self.model.calculate_sol_distance(pos_x, pos_y, pos_z)
+                candidate_data["distance_from_sol_ly"] = distance
+            except (IndexError, TypeError):
+                pass  # Skip star position if malformed
         
         # Calculate rating
         temp_k = candidate_data["surface_temp_k"]
@@ -294,22 +330,27 @@ class JournalImporter:
                 self.duplicates_skipped += 1
         
         except Exception as e:
+            error_msg = f"DB insert failed for {body_name}: {type(e).__name__}"
             self._log(f"    ✗ Failed to log {body_name}: {e}")
             self.errors += 1
-    
-    def _get_stats(self) -> Dict[str, int]:
+            if len(self.error_details) < 10:
+                self.error_details.append(error_msg)
+
+    def _get_stats(self) -> Dict[str, Any]:
         """Get import statistics"""
         return {
             "files_processed": self.files_processed,
             "events_processed": self.events_processed,
             "candidates_found": self.candidates_found,
             "duplicates_skipped": self.duplicates_skipped,
+            "errors": self.errors,
+            "error_details": self.error_details,
+        }
+
+
 # ============================================================================
 # FUNCTIONS
 # ============================================================================
-
-            "errors": self.errors
-        }
 
 
 def main():

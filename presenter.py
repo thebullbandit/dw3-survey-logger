@@ -616,13 +616,18 @@ class Earth2Presenter:
                 logger.debug("Failed to report diagnostics error to comms: %s", e2)
                 pass
 
-    def handle_export_density_xlsx(self):
-            """Handle DW3 density worksheet XLSX export request with folder picker - creates one file per sample"""
+    def handle_export_density_xlsx(self, survey_type=None):
+            """Handle DW3 density worksheet XLSX export request with folder picker - creates one file per sample
+
+            Args:
+                survey_type: Optional SurveyType to filter exports. If None, exports all density observations.
+            """
             try:
                 from pathlib import Path
                 from datetime import datetime
                 import threading
                 from tkinter import filedialog
+                from observer_models import SurveyType
 
                 if not self.observer_storage:
                     self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
@@ -692,10 +697,12 @@ class Earth2Presenter:
                             cmdr_name=cmdr,
                             sample_tag=sample_tag,
                             z_bin=z_bin,
+                            survey_type=survey_type,
                         )
 
                         num_files = len(created_files)
-                        self.model.add_comms_message(f"[SYSTEM] Density worksheets exported: {num_files} sample file(s)")
+                        survey_label = survey_type.value if survey_type else "all"
+                        self.model.add_comms_message(f"[SYSTEM] Density worksheets exported ({survey_label}): {num_files} sample file(s)")
                         for fp in created_files:
                             self.model.add_comms_message(f"    - {fp.name}")
                     except Exception as e:
@@ -812,6 +819,11 @@ class Earth2Presenter:
 
                     if stats['errors'] > 0:
                         self.model.add_comms_message(f"[WARNING] Errors encountered: {stats['errors']}")
+                        # Show error details if available
+                        error_details = stats.get('error_details', [])
+                        if error_details:
+                            for detail in error_details[:5]:  # Show first 5 errors
+                                self.model.add_comms_message(f"[WARNING] - {detail}")
 
                     self.model.add_comms_message("[INFO] Import complete!")
 
@@ -1026,7 +1038,7 @@ class Earth2Presenter:
                 "Features:",
                 "  - Real-time journal monitoring",
                 "  - Earth Similarity and Goldilocks scoring",
-                "  - Density Sheet and Boxel Sheet exports",
+                "  - XLSX exports",
                 "  - Observer overlay with global hotkey support\n",
                 "               Fly Safe CMDR o7",
             ])

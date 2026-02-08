@@ -39,7 +39,9 @@ from journal_monitor import JournalMonitor
 from journal_state_manager import JournalStateManager
 from observer_storage import ObserverStorage
 from observer_overlay import ObserverOverlay
-from observer_models import ObserverNote, SliceStatus
+from observer_models import ObserverNote, SliceStatus, SurveyType
+from ui.survey_selector import SurveySelector
+from typing import Dict
 
 
 # ============================================================================
@@ -103,7 +105,7 @@ def get_config() -> dict:
     config = {
         # Application info
         "APP_NAME": "DW3 Survey Logger",
-        "VERSION": "0.9.16",
+        "VERSION": "0.9.17",
 
         # Hotkey
         "HOTKEY_LABEL": bootstrap_hotkey_label or "Ctrl+Alt+O",
@@ -200,7 +202,8 @@ def main():
     view = None
     presenter = None
     journal_monitor = None
-    observer_overlay = None
+    # Dictionary of overlays keyed by SurveyType - allows multiple windows open simultaneously
+    observer_overlays: Dict[SurveyType, ObserverOverlay] = {}
     global_hotkey_handle = None
 
     # Initialize database (DB worker thread)
@@ -361,26 +364,8 @@ def main():
             presenter.add_comms_message("[OBSERVER ERROR] Storage not available")
 
 
-    # Instantiate the ObserverOverlay now that presenter + journal monitor exist.
-    # (Some earlier patch versions broke indentation here; keep it simple and correct.)
-    try:
-        # Observer overlay wiring (event-driven refresh): pass a context getter + save callback
-        observer_overlay = ObserverOverlay(
-            root,
-            config,
-            get_context_fn=state_manager.get_context,
-            on_save=on_observation_saved,
-            session_id=(getattr(journal_monitor, "current_session_id", None) or ""),
-            app_version=str(config.get("VERSION") or ""),
-            observer_storage=observer_storage,
-        )
-    except Exception as e:
-        observer_overlay = None
-        try:
-            presenter.add_comms_message(f"[OBSERVER ERROR] Failed to initialize overlay: {e}")
-        except Exception as e:
-            logger.debug("Failed to report overlay error to comms: %s", e)
-            pass
+    # Overlays are created on-demand when user selects a survey type
+    # Define callbacks that will be attached to each overlay when created
 
     def on_boxel_saved(entry: dict):
         """Save a boxel entry to the separate boxel table."""
@@ -404,25 +389,79 @@ def main():
         else:
             presenter.add_comms_message("[OBSERVER] Observation edited successfully")
 
-    if observer_overlay is not None:
-        observer_overlay.on_save_boxel = on_boxel_saved
-        observer_overlay.on_export = presenter.handle_export_density_xlsx
-        observer_overlay.on_edit = on_observation_edited
-
     def open_observer_overlay():
-        """Open the observer overlay with current context"""
-        if observer_overlay is None:
-            presenter.add_comms_message("[OBSERVER ERROR] Overlay not available (initialization failed)")
+        """Open the observer overlay with current context after survey type selection.
+
+        Allows multiple survey windows to be open simultaneously (one per survey type).
+        """
+        nonlocal observer_overlays
+
+        # Show survey type selector first
+        selector = SurveySelector(root, {
+            "BG": config.get("BG", "#0a0a0f"),
+            "BG_PANEL": config.get("BG_PANEL", "#12121a"),
+            "BG_FIELD": config.get("BG_FIELD", "#1a1a28"),
+            "TEXT": config.get("TEXT", "#e0e0ff"),
+            "MUTED": config.get("MUTED", "#6a6a8a"),
+            "BORDER_OUTER": config.get("BORDER_OUTER", "#2a2a3f"),
+            "ORANGE": config.get("ORANGE", "#ff8833"),
+        })
+        survey_type = selector.show()
+
+        # User cancelled
+        if survey_type is None:
             return
+
         context = state_manager.get_context()
-        # Update session_id in case it changed
+
+        # Check if we already have an overlay for this survey type
+        existing_overlay = observer_overlays.get(survey_type)
+
+        if existing_overlay is not None and existing_overlay.is_visible():
+            # Overlay already open - just focus it and update context
+            try:
+                existing_overlay.session_id = getattr(journal_monitor, "current_session_id", None) or ""
+            except Exception as e:
+                logger.debug("Observer session_id update failed: %s", e)
+            existing_overlay.show(context)
+            presenter.add_comms_message(f"[OBSERVER] Focused existing {survey_type.value} overlay")
+            return
+
+        # Create new overlay for this survey type
         try:
-            observer_overlay.session_id = getattr(journal_monitor, "current_session_id", None) or ""
+            new_overlay = ObserverOverlay(
+                root,
+                config,
+                get_context_fn=state_manager.get_context,
+                on_save=on_observation_saved,
+                session_id=(getattr(journal_monitor, "current_session_id", None) or ""),
+                app_version=str(config.get("VERSION") or ""),
+                observer_storage=observer_storage,
+                survey_type=survey_type,
+            )
+            # Set up callbacks
+            new_overlay.on_save_boxel = on_boxel_saved
+            new_overlay.on_export = presenter.handle_export_density_xlsx
+            new_overlay.on_export_boxel = presenter.handle_export_boxel_xlsx
+            new_overlay.on_edit = on_observation_edited
+            new_overlay.hotkey_hint = hotkey_hint_text
+
+            # Store in dictionary
+            observer_overlays[survey_type] = new_overlay
+
         except Exception as e:
-            logger.debug("Observer session_id update failed: %s", e)
-            observer_overlay.session_id = ""
-        observer_overlay.show(context)
-        presenter.add_comms_message("[OBSERVER] Overlay opened")
+            presenter.add_comms_message(f"[OBSERVER ERROR] Failed to create overlay: {e}")
+            return
+
+        new_overlay.show(context)
+
+        # Log which survey type was selected
+        survey_names = {
+            SurveyType.REGULAR_DENSITY: "Regular Density",
+            SurveyType.LOGARITHMIC_DENSITY: "Logarithmic Density",
+            SurveyType.BOXEL_SIZE: "Boxel Size",
+        }
+        presenter.add_comms_message(f"[OBSERVER] {survey_names.get(survey_type, 'Survey')} overlay opened")
 
     # Add button to control frame
     btn_observation = tk.Button(
@@ -488,9 +527,7 @@ def main():
         if hk_status.error:
             logger.warning("Global hotkey unavailable, using fallback. Reason: %s", hk_status.error)
 
-    if observer_overlay is not None:
-        observer_overlay.hotkey_hint = hotkey_hint_text
-
+    # Note: hotkey_hint is set on each overlay when created in open_observer_overlay()
 
     # Add startup messages
     presenter.add_comms_message("[SYSTEM] Application started")
@@ -559,10 +596,11 @@ def main():
             logger.debug("Shutdown: hotkey unregister: %s", e)
             pass
 
-        # Close observer overlay if open
+        # Close all observer overlays if open
         try:
-            if observer_overlay and observer_overlay.is_visible():
-                observer_overlay.hide()
+            for overlay in observer_overlays.values():
+                if overlay and overlay.is_visible():
+                    overlay.hide()
         except Exception as e:
             logger.debug("Shutdown: overlay hide: %s", e)
             pass

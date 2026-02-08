@@ -14,8 +14,6 @@ Design principles:
 - Observer data is add-on annotation, never overwrites journal
 - Append-only storage with amendment tracking
 - Schema versioning for future compatibility
-
-UPDATED: Support for "empty" entries when no systems exist within 20ly (zero density)
 """
 
 # ============================================================================
@@ -35,9 +33,6 @@ import json
 # =============================================================================
 
 SURVEY_AXIS_INDEX = 1  # Journal Y = galactic height (the DW3 survey axis)
-
-# Special marker for zero-density areas
-EMPTY_MARKER = "EMPTY"  # Used in system_name when no systems found within 20ly
 
 
 # =============================================================================
@@ -66,13 +61,6 @@ class RecordStatus(Enum):
     ACTIVE = "active"
     AMENDED = "amended"
     DELETED = "deleted"
-
-
-class SurveyType(Enum):
-    """Type of survey being conducted"""
-    REGULAR_DENSITY = "regular_density"      # 21 samples, 50 LY increments
-    LOGARITHMIC_DENSITY = "logarithmic_density"  # 24 samples, variable increments
-    BOXEL_SIZE = "boxel_size"                # Single entry for boxel survey
 
 
 # =============================================================================
@@ -126,14 +114,6 @@ class ObserverNote:
         - slice_status, completeness_confidence, sampling_method
         - system_count, corrected_n, max_distance
         - flags, notes
-    
-    Special case - Zero density areas:
-        - When no systems exist within 20ly of target point
-        - Set system_name to "EMPTY" (or any placeholder)
-        - Set system_count to 0
-        - Set max_distance to 20.0 (search radius used)
-        - corrected_n will be auto-set to 1 (0 + 1)
-        - This distinguishes from: finding a system but nothing within 20ly
     """
 
     # === Primary key ===
@@ -143,14 +123,11 @@ class ObserverNote:
     event_id: str = ""                              # Deterministic hash linking to journal event
     timestamp_utc: str = ""                         # ISO format timestamp
     system_address: Optional[int] = None            # Game's unique system ID
-    system_name: str = ""                           # Star system name (or "EMPTY" for zero-density)
+    system_name: str = ""                           # Star system name
     star_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # X, Y, Z coordinates
     z_bin: int = 0                                  # Z-slice bin (e.g., round(z/50)*50)
     session_id: str = ""                            # Logger session ID
     body_name: Optional[str] = None                 # Body name if relevant
-
-    # === Survey type (set at observation start) ===
-    survey_type: SurveyType = SurveyType.REGULAR_DENSITY  # Default for backward compatibility
 
     # === Derived / storage metadata ===
     # Stable per (session_id, system, z_bin): the Nth sample taken in this slice.
@@ -168,9 +145,9 @@ class ObserverNote:
     sampling_method: SamplingMethod = SamplingMethod.OTHER
 
     # === CMDR-input: Density sampling data (from spreadsheet) ===
-    system_count: Optional[int] = None              # Raw system count observed (0 for empty areas)
+    system_count: Optional[int] = None              # Raw system count observed
     corrected_n: Optional[int] = None               # User-adjusted count (avoids zero, stabilizes calc)
-    max_distance: Optional[float] = None            # Search radius in LY (20.0 for empty areas)
+    max_distance: Optional[float] = None            # Search radius in LY
 
     # === CMDR-input: Boxel size survey ===
     boxel_highest_system: str = ""                  # Highest-numbered system in current boxel (optional)
@@ -195,19 +172,6 @@ class ObserverNote:
     created_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    
-    def is_empty_entry(self) -> bool:
-        """
-        Check if this is an "empty" entry (zero density - no systems within 20ly).
-        
-        Returns:
-            True if this represents a zero-density measurement
-        """
-        return (
-            self.system_count == 0 and 
-            self.max_distance is not None and
-            self.system_name.upper() in ("EMPTY", "SKIPPED", "NONE", "ZERO")
-        )
 
     def to_payload_dict(self) -> Dict[str, Any]:
         """
@@ -224,7 +188,6 @@ class ObserverNote:
             "z_bin": self.z_bin,
             "session_id": self.session_id,
             "body_name": self.body_name,
-            "survey_type": self.survey_type.value,
             "sample_index": self.sample_index,
             "system_index": self.system_index,
             "slice_status": self.slice_status.value,
@@ -261,8 +224,6 @@ class ObserverNote:
             data['sampling_method'] = SamplingMethod(data['sampling_method'])
         if 'record_status' in data and isinstance(data['record_status'], str):
             data['record_status'] = RecordStatus(data['record_status'])
-        if 'survey_type' in data and isinstance(data['survey_type'], str):
-            data['survey_type'] = SurveyType(data['survey_type'])
 
         # Handle flags
         if 'flags' in data and isinstance(data['flags'], dict):
@@ -291,9 +252,9 @@ class ObserverNote:
         if self.system_count is not None:
             self.corrected_n = self.system_count + 1
 
-        # Required fields - but allow "EMPTY" for zero-density entries
+        # Required fields
         if not self.system_name:
-            errors.append("System name is required (use 'EMPTY' for zero-density areas)")
+            errors.append("System name is required")
 
         # Discard requires reason
         if self.slice_status == SliceStatus.DISCARD and not self.notes.strip():
@@ -314,14 +275,6 @@ class ObserverNote:
         # Max distance should be non-negative if set
         if self.max_distance is not None and self.max_distance < 0:
             errors.append("Max distance must be non-negative")
-        
-        # Special validation for empty entries
-        if self.is_empty_entry():
-            # Empty entries must have system_count = 0 and max_distance set
-            if self.system_count != 0:
-                errors.append("Empty entries must have system_count = 0")
-            if self.max_distance is None or self.max_distance <= 0:
-                errors.append("Empty entries must specify search radius (max_distance)")
 
         return (len(errors) == 0, errors)
 
@@ -367,8 +320,7 @@ def calculate_z_bin(z_coordinate: float, bin_size: int = 50) -> int:
 def create_observation_from_context(
     context: Dict[str, Any],
     session_id: str,
-    app_version: str = "",
-    survey_type: SurveyType = SurveyType.REGULAR_DENSITY
+    app_version: str = ""
 ) -> ObserverNote:
     """
     Create a new ObserverNote pre-filled from journal context.
@@ -377,7 +329,6 @@ def create_observation_from_context(
         context: Dictionary with system_name, system_address, star_pos, etc.
         session_id: Current session ID
         app_version: Application version string
-        survey_type: Type of survey being conducted
 
     Returns:
         New ObserverNote with auto-filled fields
@@ -395,6 +346,5 @@ def create_observation_from_context(
         z_bin=calculate_z_bin(star_pos[SURVEY_AXIS_INDEX]) if star_pos else 0,
         session_id=session_id,
         body_name=context.get('body_name'),
-        survey_type=survey_type,
         app_version=app_version,
     )

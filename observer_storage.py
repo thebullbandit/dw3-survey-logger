@@ -45,6 +45,7 @@ from observer_models import (
     SamplingMethod,
     RecordStatus,
     ObservationFlags,
+    SurveyType,
 )
 
 
@@ -203,6 +204,20 @@ class ObserverStorage:
         except sqlite3.OperationalError:
             pass
 
+        # Add survey_type column for existing databases (best effort)
+        try:
+            self.conn.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN survey_type TEXT DEFAULT 'regular_density'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Index for survey_type (for filtering by survey type)
+        try:
+            self.conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_obs_survey_type ON {self.TABLE_NAME}(survey_type)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
 
     def _create_boxel_table(self):
         """Create boxel_entries table for boxel size survey data"""
@@ -338,14 +353,22 @@ class ObserverStorage:
             raise ValueError(f"Validation failed: {'; '.join(errors)}")
 
         with self._lock:
+            # Get survey_type for filtering (handle both enum and string)
+            survey_type_val = getattr(note, 'survey_type', None)
+            if isinstance(survey_type_val, SurveyType):
+                survey_type_str = survey_type_val.value
+            elif isinstance(survey_type_val, str):
+                survey_type_str = survey_type_val
+            else:
+                survey_type_str = SurveyType.REGULAR_DENSITY.value
+
             # Assign slice sample index (only increments when a prior sample was marked COMPLETE)
             if note.sample_index is None:
-                note.sample_index = self._get_current_slice_sample_index(note.session_id, note.z_bin)
+                note.sample_index = self._get_current_slice_sample_index(note.session_id, note.z_bin, survey_type_str)
 
             # Assign system index within this slice sample run (resets when sample_index increments)
             if getattr(note, "system_index", None) is None:
-                next_idx = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index)
-
+                next_idx = self._get_next_system_index(note.session_id, note.z_bin, note.sample_index, survey_type_str)
 
                 note.system_index = next_idx
 
@@ -362,37 +385,71 @@ class ObserverStorage:
             return note.id
 
 
-    def _get_current_slice_sample_index(self, session_id: str, z_bin: int) -> int:
-        """Return the active slice-sample index for (session_id, z_bin).
+    def _get_current_slice_sample_index(self, session_id: str, z_bin: int, survey_type: str = None) -> int:
+        """Return the active slice-sample index for (session_id, z_bin, survey_type).
 
-        Increments only when a prior ACTIVE record for this slice was saved with slice_status='complete'.
+        NOW PERSISTENT ACROSS APP RESTARTS:
+        - If there's an in-progress sample for this z_bin+survey_type (any session), continue it
+        - Otherwise, increment based on completed samples across all sessions
         """
+        # Default to regular_density for backward compatibility
+        if survey_type is None:
+            survey_type = SurveyType.REGULAR_DENSITY.value
+
+        # First, check if there's an active IN_PROGRESS sample for this z_bin+survey_type (any session)
         cursor = self.conn.execute(
             f"""
-            SELECT COALESCE(COUNT(DISTINCT sample_index), 0) + 1 AS idx
+            SELECT MAX(sample_index) AS idx
             FROM {self.TABLE_NAME}
-            WHERE session_id = ?
-              AND z_bin = ?
+            WHERE z_bin = ?
+              AND (survey_type = ? OR survey_type IS NULL)
+              AND record_status = 'active'
+              AND slice_status = 'in_progress'
+            """,
+            (z_bin, survey_type),
+        )
+        row = cursor.fetchone()
+        if row and row["idx"] is not None:
+            # Continue the existing in-progress sample
+            return int(row["idx"])
+
+        # No in-progress sample exists, so start a new one
+        # Count all completed samples for this z_bin+survey_type across ALL sessions
+        cursor = self.conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT session_id || '-' || sample_index) AS count
+            FROM {self.TABLE_NAME}
+            WHERE z_bin = ?
+              AND (survey_type = ? OR survey_type IS NULL)
               AND record_status = 'active'
               AND slice_status = 'complete'
             """,
-            (session_id, z_bin),
+            (z_bin, survey_type),
         )
         row = cursor.fetchone()
-        return int(row["idx"]) if row and row["idx"] is not None else 1
+        completed_count = int(row["count"]) if row and row["count"] is not None else 0
+        return completed_count + 1
 
-    def _get_next_system_index(self, session_id: str, z_bin: int, sample_index: int) -> int:
-        """Return next system_index for the current (session_id, z_bin, sample_index) run."""
+    def _get_next_system_index(self, session_id: str, z_bin: int, sample_index: int, survey_type: str = None) -> int:
+        """Return next system_index for the current (z_bin, sample_index, survey_type) run.
+
+        NOW PERSISTENT: Works across sessions by looking at the actual sample_index,
+        not just the current session_id.
+        """
+        # Default to regular_density for backward compatibility
+        if survey_type is None:
+            survey_type = SurveyType.REGULAR_DENSITY.value
+
         cursor = self.conn.execute(
             f"""
             SELECT COALESCE(MAX(system_index), 0) + 1 AS next_idx
             FROM {self.TABLE_NAME}
-            WHERE session_id = ?
-              AND z_bin = ?
+            WHERE z_bin = ?
               AND sample_index = ?
+              AND (survey_type = ? OR survey_type IS NULL)
               AND record_status = 'active'
             """,
-            (session_id, z_bin, sample_index),
+            (z_bin, sample_index, survey_type),
         )
         row = cursor.fetchone()
         return int(row["next_idx"]) if row and row["next_idx"] is not None else 1
@@ -544,6 +601,15 @@ class ObserverStorage:
 
     def _insert_note(self, note: ObserverNote):
         """Insert a note into the database"""
+        # Get survey_type value (handle both enum and string)
+        survey_type_val = getattr(note, 'survey_type', None)
+        if isinstance(survey_type_val, SurveyType):
+            survey_type_str = survey_type_val.value
+        elif isinstance(survey_type_val, str):
+            survey_type_str = survey_type_val
+        else:
+            survey_type_str = SurveyType.REGULAR_DENSITY.value
+
         self.conn.execute(f"""
             INSERT INTO {self.TABLE_NAME} (
                 id, created_at_utc, event_id, system_address, system_name,
@@ -552,9 +618,10 @@ class ObserverStorage:
                 sample_index,
                 system_index,
                 boxel_highest_system,
+                survey_type,
                 supersedes_id, record_status,
                 payload_json, payload_hash, prev_hash, schema_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             note.id,
             note.created_at_utc,
@@ -571,6 +638,7 @@ class ObserverStorage:
             note.sample_index,
             getattr(note, 'system_index', None),
             getattr(note, 'boxel_highest_system', ''),
+            survey_type_str,
             note.supersedes_id,
             note.record_status.value,
             note.to_json(),
@@ -770,33 +838,43 @@ class ObserverStorage:
 
             return {row['slice_status']: row['count'] for row in cursor.fetchall()}
 
-    def get_sample_counts(self, session_id: str, z_bin: int) -> Dict[str, int]:
+    def get_sample_counts(self, session_id: str, z_bin: int, survey_type: str = None) -> Dict[str, int]:
         """
-        Get sample and system counts for the current session and z-bin.
+        Get sample and system counts for the current session, z-bin, and survey type.
 
         Counts persist across app restarts: the total completed samples
-        spans all sessions for this z_bin, and the current sample number
+        spans all sessions for this z_bin+survey_type, and the current sample number
         continues from where previous sessions left off.
+
+        Args:
+            session_id: Current session ID
+            z_bin: Z-bin value
+            survey_type: Survey type string (e.g., 'regular_density', 'logarithmic_density')
 
         Returns a dict with:
             - current_sample: The current sample_index (all-time, 1-based)
             - current_systems: Number of systems in the current session sample
-            - total_samples: Total completed samples across all sessions for this z_bin
+            - total_samples: Total completed samples across all sessions for this z_bin+survey_type
         """
+        # Default to regular_density for backward compatibility
+        if survey_type is None:
+            survey_type = SurveyType.REGULAR_DENSITY.value
+
         with self._lock:
-            # Get total completed samples across ALL sessions for this z_bin
+            # Get total completed samples across ALL sessions for this z_bin+survey_type
             cursor = self.conn.execute(f"""
                 SELECT COUNT(DISTINCT session_id || '-' || sample_index) as count
                 FROM {self.TABLE_NAME}
                 WHERE z_bin = ?
+                  AND (survey_type = ? OR survey_type IS NULL)
                   AND record_status = 'active'
                   AND slice_status = 'complete'
-            """, (z_bin,))
+            """, (z_bin, survey_type))
             row = cursor.fetchone()
             total_samples = row['count'] if row else 0
 
             # Get current session's sample index (session-local)
-            session_sample = self._get_current_slice_sample_index(session_id, z_bin)
+            session_sample = self._get_current_slice_sample_index(session_id, z_bin, survey_type)
 
             # All-time sample number = completed from prior sessions + current session sample
             # Count completed samples from OTHER sessions
@@ -804,26 +882,37 @@ class ObserverStorage:
                 SELECT COUNT(DISTINCT session_id || '-' || sample_index) as count
                 FROM {self.TABLE_NAME}
                 WHERE z_bin = ?
+                  AND (survey_type = ? OR survey_type IS NULL)
                   AND session_id != ?
                   AND record_status = 'active'
                   AND slice_status = 'complete'
-            """, (z_bin, session_id))
+            """, (z_bin, survey_type, session_id))
             row = cursor.fetchone()
             prior_session_samples = row['count'] if row else 0
 
             current_sample = prior_session_samples + session_sample
 
-            # Get system count for current session's active sample
+            # Get system count for the active IN_PROGRESS sample across ALL sessions
+            # This ensures progress persists when app is restarted
             cursor = self.conn.execute(f"""
-                SELECT COUNT(*) as count
+                SELECT COUNT(*) as count, MAX(sample_index) as max_sample
                 FROM {self.TABLE_NAME}
-                WHERE session_id = ?
-                  AND z_bin = ?
-                  AND sample_index = ?
+                WHERE z_bin = ?
+                  AND (survey_type = ? OR survey_type IS NULL)
                   AND record_status = 'active'
-            """, (session_id, z_bin, session_sample))
+                  AND slice_status = 'in_progress'
+            """, (z_bin, survey_type))
             row = cursor.fetchone()
-            current_systems = row['count'] if row else 0
+
+            # If there's an in-progress sample, use its count
+            # Otherwise, start fresh (count = 0)
+            if row and row['max_sample'] is not None:
+                current_systems = row['count'] if row['count'] else 0
+                # Update session_sample to match the actual in-progress sample
+                session_sample = row['max_sample']
+                current_sample = prior_session_samples + session_sample
+            else:
+                current_systems = 0
 
             return {
                 'current_sample': current_sample,
