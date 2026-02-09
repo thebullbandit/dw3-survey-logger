@@ -51,11 +51,13 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: DW3_Survey_Logger_Windows.zip
           path: DW3_Survey_Logger_Windows.zip
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         with:
           files: DW3_Survey_Logger_Windows.zip
