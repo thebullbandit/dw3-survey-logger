@@ -1,8 +1,7 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[ocd]
+*.egg-info
 
 # Virtual env
 .venv/
@@ -34,5 +33,6 @@ Thumbs.db
 # Build artifacts (if any)
 dist/
 build/
+wheels/
 *.zip
 nul

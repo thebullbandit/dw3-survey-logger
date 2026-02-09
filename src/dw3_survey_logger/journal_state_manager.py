@@ -24,7 +24,7 @@ from typing import Optional, Tuple, List, Callable, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from observer_models import calculate_z_bin, generate_event_id, SURVEY_AXIS_INDEX
+from .observer_models import calculate_z_bin, generate_event_id, SURVEY_AXIS_INDEX
 
 
 # =============================================================================

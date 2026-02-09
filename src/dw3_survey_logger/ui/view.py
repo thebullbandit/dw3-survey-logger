@@ -25,10 +25,10 @@ from tkinter import filedialog, messagebox
 from typing import Optional, Dict, Any, Callable, List
 import webbrowser
 
-from ui.theme import UITheme
-from ui.widgets import style_button
-from ui.dialogs import OptionsDialog, HotkeyDialog, AboutDialog
-from ui import panels as _panels
+from .theme import UITheme
+from .widgets import style_button
+from .dialogs import OptionsDialog, HotkeyDialog, AboutDialog
+from . import panels as _panels
 
 
 class Earth2View:

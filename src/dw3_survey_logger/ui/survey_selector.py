@@ -10,7 +10,7 @@ import tkinter as tk
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from observer_models import SurveyType
+from dw3_survey_logger.observer_models import SurveyType
 
 
 class SurveySelector:

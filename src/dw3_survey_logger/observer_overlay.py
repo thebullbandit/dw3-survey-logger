@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Tuple
 from dataclasses import dataclass
 
-from observer_models import (
+from .observer_models import (
     ObserverNote,
     SliceStatus,
     SamplingMethod,
@@ -40,7 +40,7 @@ from observer_models import (
     create_observation_from_context,
     SURVEY_AXIS_INDEX,
 )
-from journal_state_manager import CurrentContext
+from .journal_state_manager import CurrentContext
 
 import logging
 logger = logging.getLogger("dw3.observer_overlay")
@@ -2076,7 +2076,7 @@ class ObserverOverlay:
             note: ObserverNote to edit
         """
         # Create fake context from note
-        from journal_state_manager import CurrentContext
+        from .journal_state_manager import CurrentContext
         context = CurrentContext(
             system_name=note.system_name,
             system_address=note.system_address,

@@ -460,7 +460,7 @@ class Earth2Presenter:
                     if not self.observer_storage:
                         self.model.add_comms_message("[✗] Observer storage not available (XLSX skipped)")
                     else:
-                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
+                        from .density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
                         template_path = resource_path("templates", "Stellar Density Scan Worksheet.xlsx")
 
                         notes = self.observer_storage.get_active()
@@ -520,7 +520,7 @@ class Earth2Presenter:
                     if not self.observer_storage:
                         self.model.add_comms_message("[✗] Observer storage not available (Boxel sheet skipped)")
                     else:
-                        from boxel_sheet_exporter import export_boxel_sheet
+                        from .boxel_sheet_exporter import export_boxel_sheet
                         boxel_entries = self.observer_storage.get_boxel_entries()
                         boxel_result = export_boxel_sheet(
                             boxel_entries,
@@ -592,7 +592,7 @@ class Earth2Presenter:
 
             def _worker():
                 try:
-                    from diagnostics_exporter import export_diagnostics_zip
+                    from .diagnostics_exporter import export_diagnostics_zip
                     out = export_diagnostics_zip(
                         zip_path=zip_path,
                         config=self.config,
@@ -627,7 +627,7 @@ class Earth2Presenter:
                 from datetime import datetime
                 import threading
                 from tkinter import filedialog
-                from observer_models import SurveyType
+                from .observer_models import SurveyType
 
                 if not self.observer_storage:
                     self.model.add_comms_message("[OBSERVER] No observer DB available (worksheet export disabled).")
@@ -655,7 +655,7 @@ class Earth2Presenter:
                 def export_thread():
                     try:
                         # Template ships with the app under ./templates
-                        from density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
+                        from .density_worksheet_exporter_multi_file import export_density_worksheet_from_notes_multi_file, resource_path
                         template_path = resource_path("templates", "Stellar Density Scan Worksheet.xlsx")
 
                         notes = self.observer_storage.get_active()
@@ -746,7 +746,7 @@ class Earth2Presenter:
 
             def export_thread():
                 try:
-                    from boxel_sheet_exporter import export_boxel_sheet
+                    from .boxel_sheet_exporter import export_boxel_sheet
 
                     entries = self.observer_storage.get_boxel_entries()
                     cmdr = (self.model.get_status("cmdr_name") or "").strip() or "UnknownCMDR"
@@ -792,7 +792,7 @@ class Earth2Presenter:
 
             def import_thread():
                 try:
-                    from import_journals import JournalImporter
+                    from .import_journals import JournalImporter
                     from pathlib import Path
 
                     # Get journal directory from config
@@ -948,7 +948,7 @@ class Earth2Presenter:
 
             # Validate and normalize the hotkey
             try:
-                from hotkey_manager import parse_hotkey_label
+                from .hotkey_manager import parse_hotkey_label
                 _p, _tk, normalized = parse_hotkey_label(new_hotkey)
                 self.config["HOTKEY_LABEL"] = normalized
             except Exception as e:
@@ -1089,7 +1089,7 @@ class Earth2Presenter:
 
                 if similarity_score >= 0:
                     try:
-                        from earth_similarity_score import get_similarity_breakdown
+                        from .earth_similarity_score import get_similarity_breakdown
                         similarity_breakdown = get_similarity_breakdown(candidate_data)
                     except Exception as e:
                         logger.debug("get_similarity_breakdown failed: %s", e)
@@ -1097,7 +1097,7 @@ class Earth2Presenter:
 
                 if goldilocks_score >= 0:
                     try:
-                        from earth_similarity_score import calculate_goldilocks_score
+                        from .earth_similarity_score import calculate_goldilocks_score
                         goldilocks_data = calculate_goldilocks_score(candidate_data)
                         goldilocks_breakdown = goldilocks_data.get("breakdown", {})
                     except Exception as e:

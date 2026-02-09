@@ -19,7 +19,7 @@ for _cache_dir in _app_dir.rglob("__pycache__"):
 import logging
 import threading
 import tkinter as tk
-from utils import resource_path
+from .utils import resource_path
 import sys
 import json
 import urllib.request
@@ -31,16 +31,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("dw3.main")
 
-from earth2_database import Earth2Database
-from model import Earth2Model
-from ui import Earth2View
-from presenter import Earth2Presenter
-from journal_monitor import JournalMonitor
-from journal_state_manager import JournalStateManager
-from observer_storage import ObserverStorage
-from observer_overlay import ObserverOverlay
-from observer_models import ObserverNote, SliceStatus, SurveyType
-from ui.survey_selector import SurveySelector
+from .earth2_database import Earth2Database
+from .model import Earth2Model
+from dw3_survey_logger.ui import Earth2View
+from .presenter import Earth2Presenter
+from .journal_monitor import JournalMonitor
+from .journal_state_manager import JournalStateManager
+from .observer_storage import ObserverStorage
+from .observer_overlay import ObserverOverlay
+from .observer_models import ObserverNote, SliceStatus, SurveyType
+from dw3_survey_logger.ui.survey_selector import SurveySelector
 from typing import Dict
 
 
@@ -475,11 +475,11 @@ def main():
     )
     btn_observation.pack(side="left", padx=5)
 
-    from hotkey_manager import try_register_global_hotkey
+    from .hotkey_manager import try_register_global_hotkey
 
     # Preferred hotkey label (user-configurable via Options)
     # Default chosen to (Ctrl+Shift+O).
-    from hotkey_manager import parse_hotkey_label
+    from .hotkey_manager import parse_hotkey_label
 
     HOTKEY_LABEL = str(config.get("HOTKEY_LABEL") or "Ctrl+Alt+O")
     try:
