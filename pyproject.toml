@@ -17,6 +17,9 @@ dependencies = [
 dw3-survey-logger = "dw3_survey_logger.main:main"
 
 [build-system]
-requires = ["uv_build>=0.10.0,<0.11.0"]
-build-backend = "uv_build"
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel.force-include]
+    "templates" = "dw3_survey_logger/templates"
+    "assets" = "dw3_survey_logger/assets"
