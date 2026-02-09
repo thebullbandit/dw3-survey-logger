@@ -1,0 +1,22 @@
+[project]
+name = "dw3-survey-logger"
+version = "0.1.0"
+description = "CLI utility for Distant Worlds 3 survey logging"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "openpyxl>=3.1.2",
+    # Put your runtime dependencies here, for example:
+    # "requests>=2.0.0",
+    # "typer>=0.7.0"
+    "pynput>=1.7.6",
+    "pywin32>=306 ; sys_platform == 'win32'",
+]
+
+[project.scripts]
+dw3-survey-logger = "dw3_survey_logger.main:main"
+
+[build-system]
+requires = ["uv_build>=0.10.0,<0.11.0"]
+build-backend = "uv_build"
+
