@@ -2076,7 +2076,7 @@ class ObserverOverlay:
             note: ObserverNote to edit
         """
         # Create fake context from note
-        from journal_state_manager import CurrentContext
+        from .journal_state_manager import CurrentContext
         context = CurrentContext(
             system_name=note.system_name,
             system_address=note.system_address,

@@ -376,7 +376,7 @@ class DependencyContainer:
         try:
             import sys
             sys.path.insert(0, str(Path(__file__).parent.parent))
-            from earth2_database import Earth2Database
+            from .earth2_database import Earth2Database
             
             database = Earth2Database(config.paths.db_path)
             logger.info(f"Database initialized: {config.paths.db_path}")
@@ -385,7 +385,7 @@ class DependencyContainer:
             raise
         
         # Create error handler
-        from error_handling import ErrorHandler
+        from .error_handling import ErrorHandler
         error_handler = ErrorHandler(logger)
         
         return cls(
@@ -453,7 +453,7 @@ def create_model(container: DependencyContainer):
     Returns:
         Configured Earth2Model instance
     """
-    from model import Earth2Model
+    from .model import Earth2Model
     
     return Earth2Model(
         database=container.database,
@@ -493,7 +493,7 @@ def create_presenter(container: DependencyContainer, model, view, journal_monito
     Returns:
         Configured Earth2Presenter instance
     """
-    from presenter import Earth2Presenter
+    from .presenter import Earth2Presenter
     
     return Earth2Presenter(
         model=model,
@@ -515,7 +515,7 @@ def create_journal_monitor(container: DependencyContainer, model, presenter):
     Returns:
         Configured JournalMonitor instance
     """
-    from journal_monitor import JournalMonitor
+    from .journal_monitor import JournalMonitor
     
     return JournalMonitor(
         journal_dir=container.config.paths.journal_dir,

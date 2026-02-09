@@ -295,7 +295,7 @@ class JournalImporter:
         
         # Calculate Goldilocks habitability score
         try:
-            from earth_similarity_score import calculate_goldilocks_score
+            from .earth_similarity_score import calculate_goldilocks_score
             goldilocks = calculate_goldilocks_score(candidate_data)
             if goldilocks["total"] >= 0:
                 candidate_data["goldilocks_score"] = goldilocks["total"]
@@ -379,9 +379,9 @@ def main():
     args = parser.parse_args()
     
     # Setup
-    from earth2_database import Earth2Database
-    from model import Earth2Model
-    from dependency_injection import FileLogger
+    from .earth2_database import Earth2Database
+    from .model import Earth2Model
+    from .dependency_injection import FileLogger
     
     # Create logger
     logger = FileLogger(args.db_path.parent / "import.log")

@@ -26,7 +26,7 @@ from typing import Optional, Dict, Any, Callable, TextIO, TYPE_CHECKING
 from collections import deque
 
 if TYPE_CHECKING:
-    from journal_state_manager import JournalStateManager
+    from .journal_state_manager import JournalStateManager
 
 from .observer_models import generate_event_id
 
