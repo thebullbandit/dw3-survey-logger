@@ -8,7 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "dw3-survey-logger"
-version = "0.1.0"
+version = "0.9.17"
 source = { editable = "." }
 dependencies = [
     { name = "openpyxl" },
