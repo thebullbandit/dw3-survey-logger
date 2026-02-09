@@ -33,14 +33,14 @@ logger = logging.getLogger("dw3.main")
 
 from .earth2_database import Earth2Database
 from .model import Earth2Model
-from ui import Earth2View
+from dw3_survey_logger.ui import Earth2View
 from .presenter import Earth2Presenter
 from .journal_monitor import JournalMonitor
 from .journal_state_manager import JournalStateManager
 from .observer_storage import ObserverStorage
 from .observer_overlay import ObserverOverlay
 from .observer_models import ObserverNote, SliceStatus, SurveyType
-from ui.survey_selector import SurveySelector
+from dw3_survey_logger.ui.survey_selector import SurveySelector
 from typing import Dict
 
 

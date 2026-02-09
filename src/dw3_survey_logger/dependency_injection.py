@@ -472,7 +472,7 @@ def create_view(container: DependencyContainer, root):
     Returns:
         Configured Earth2View instance
     """
-    from ui import Earth2View
+    from dw3_survey_logger.ui import Earth2View
     
     return Earth2View(
         root=root,

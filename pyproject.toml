@@ -1,6 +1,6 @@
 [project]
 name = "dw3-survey-logger"
-version = "0.1.0"
+version = "0.1.1"
 description = "CLI utility for Distant Worlds 3 survey logging"
 readme = "README.md"
 requires-python = ">=3.9"
