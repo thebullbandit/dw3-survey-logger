@@ -3,6 +3,16 @@
 
 # DW3 Survey Logger v0.9.17
 
+
+
+**Direct Download (Latest Stable v0.9.17):**
+
+https://github.com/thebullbandit/dw3-survey-logger/releases/download/v0.9.17/DW3_Survey_Logger_Windows.zip
+
+If Windows blocks the file:
+
+Right click → Properties → Check Unblock → Apply
+
 ## Project Status
 
 **This is still under development.**
