@@ -39,7 +39,7 @@ from threading import Lock
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 
-from observer_models import (
+from .observer_models import (
     ObserverNote,
     SliceStatus,
     SamplingMethod,

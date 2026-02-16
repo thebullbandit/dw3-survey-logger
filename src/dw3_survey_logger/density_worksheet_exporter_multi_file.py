@@ -26,7 +26,7 @@ import re
 import subprocess
 import logging
 
-from observer_models import SurveyType
+from .observer_models import SurveyType
 
 
 def resource_path(*parts: str) -> Path:

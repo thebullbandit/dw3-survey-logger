@@ -5,7 +5,7 @@
 #   python -m PyInstaller --noconfirm --clean dw3_survey_logger.spec
 
 a = Analysis(
-    ['main.py'],
+    ['src/pyinstaller-main.py'],
     datas=[
         ('assets', 'assets'),
         ('templates', 'templates'),

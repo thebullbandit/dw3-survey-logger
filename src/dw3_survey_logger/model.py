@@ -203,7 +203,7 @@ class Earth2Model:
         similarity_score = -1.0
         if candidate_data:
             try:
-                from earth_similarity_score import compute_similarity_score, score_to_category
+                from .earth_similarity_score import compute_similarity_score, score_to_category
                 similarity_score = compute_similarity_score(candidate_data)
                 
                 # If similarity score is available and valid, use it for rating

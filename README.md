@@ -266,10 +266,14 @@ If the application doesn't start:
 - **Run from CMD:** Open command prompt in the app folder and run the exe to see error messages
 
 ### Linux / Advanced Users
+Either install with `uv` via `uv tool install git+https://github.com/thebullbandit/dw3-survey-logger` or via pip:
+
 ```bash
-pip install -r requirements.txt
-python main.py
+git clone https://github.com/thebullbandit/dw3-survey-logger
+pip install dw3-survey-logger
 ```
+
+Then simply run `dw3-survey-logger`.
 
 ---
 
